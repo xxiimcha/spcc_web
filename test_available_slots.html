@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Test Available Slots API</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        max-width: 800px;
+        margin: 50px auto;
+        padding: 20px;
+        background-color: #f5f5f5;
+      }
+      .container {
+        background: white;
+        padding: 30px;
+        border-radius: 8px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+      }
+      .form-group {
+        margin-bottom: 15px;
+      }
+      label {
+        display: block;
+        margin-bottom: 5px;
+        font-weight: bold;
+      }
+      input,
+      select,
+      textarea {
+        width: 100%;
+        padding: 10px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        box-sizing: border-box;
+      }
+      button {
+        background-color: #007bff;
+        color: white;
+        padding: 10px 20px;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        margin-right: 10px;
+      }
+      button:hover {
+        background-color: #0056b3;
+      }
+      .result {
+        margin-top: 20px;
+        padding: 15px;
+        border-radius: 4px;
+      }
+      .success {
+        background-color: #d4edda;
+        border: 1px solid #c3e6cb;
+        color: #155724;
+      }
+      .error {
+        background-color: #f8d7da;
+        border: 1px solid #f5c6cb;
+        color: #721c24;
+      }
+      .slots-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+        gap: 10px;
+        margin-top: 10px;
+      }
+      .slot-button {
+        padding: 8px 12px;
+        background-color: #007bff;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 12px;
+      }
+      .slot-button:hover {
+        background-color: #0056b3;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>Test Available Slots API</h1>
+      <p>Test the get_available_time_slots.php endpoint with sample data.</p>
+
+      <div class="form-group">
+        <label for="school_year">School Year:</label>
+        <input type="text" id="school_year" value="2024-2025" />
+      </div>
+
+      <div class="form-group">
+        <label for="semester">Semester:</label>
+        <select id="semester">
+          <option value="First Semester">First Semester</option>
+          <option value="Second Semester">Second Semester</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="days">Days (comma-separated):</label>
+        <input type="text" id="days" value="Monday,Wednesday,Friday" />
+      </div>
+
+      <div class="form-group">
+        <label for="prof_id">Professor ID (optional):</label>
+        <input type="number" id="prof_id" value="1" />
+      </div>
+
+      <div class="form-group">
+        <label for="room_id">Room ID (optional):</label>
+        <input type="number" id="room_id" value="1" />
+      </div>
+
+      <div class="form-group">
+        <label for="section_id">Section ID (optional):</label>
+        <input type="number" id="section_id" value="1" />
+      </div>
+
+      <button onclick="testAPI()">Test Available Slots API</button>
+      <button onclick="clearResults()">Clear</button>
+
+      <div id="result"></div>
+    </div>
+
+    <script>
+      async function testAPI() {
+        const schoolYear = document.getElementById("school_year").value;
+        const semester = document.getElementById("semester").value;
+        const days = document
+          .getElementById("days")
+          .value.split(",")
+          .map((d) => d.trim());
+        const profId = document.getElementById("prof_id").value;
+        const roomId = document.getElementById("room_id").value;
+        const sectionId = document.getElementById("section_id").value;
+
+        const requestData = {
+          school_year: schoolYear,
+          semester: semester,
+          days: days,
+          prof_id: profId ? parseInt(profId) : null,
+          room_id: roomId ? parseInt(roomId) : null,
+          section_id: sectionId ? parseInt(sectionId) : null,
+        };
+
+        try {
+          const response = await fetch(
+            "http://localhost/spcc_database/get_available_time_slots.php",
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify(requestData),
+            }
+          );
+
+          const result = await response.json();
+
+          if (result.success) {
+            displayAvailableSlots(result.available_slots);
+          } else {
+            showError(`API Error: ${result.message}`);
+          }
+        } catch (error) {
+          showError(`Network Error: ${error.message}`);
+        }
+      }
+
+      function displayAvailableSlots(availableSlots) {
+        const resultDiv = document.getElementById("result");
+        let html = '<div class="result success">';
+        html += "<h3>✅ Available Slots Retrieved Successfully!</h3>";
+
+        Object.entries(availableSlots).forEach(([day, slots]) => {
+          html += `<h4>${day}</h4>`;
+          html += '<div class="slots-grid">';
+
+          if (Array.isArray(slots) && slots.length > 0) {
+            slots.forEach((slot, index) => {
+              html += `<button class="slot-button" onclick="selectSlot('${slot.start_time}', '${slot.end_time}')">${slot.start_time} - ${slot.end_time}</button>`;
+            });
+          } else {
+            html += "<p>No available slots for this day</p>";
+          }
+
+          html += "</div>";
+        });
+
+        html += "</div>";
+        resultDiv.innerHTML = html;
+      }
+
+      function showError(message) {
+        const resultDiv = document.getElementById("result");
+        resultDiv.innerHTML = `<div class="result error">❌ ${message}</div>`;
+      }
+
+      function selectSlot(startTime, endTime) {
+        alert(`Selected time slot: ${startTime} - ${endTime}`);
+      }
+
+      function clearResults() {
+        document.getElementById("result").innerHTML = "";
+      }
+    </script>
+  </body>
+</html>

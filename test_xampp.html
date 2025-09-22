@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>XAMPP API Test</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 20px;
+      }
+      .test {
+        margin: 10px 0;
+        padding: 10px;
+        border: 1px solid #ccc;
+      }
+      .success {
+        background-color: #d4edda;
+        border-color: #c3e6cb;
+      }
+      .error {
+        background-color: #f8d7da;
+        border-color: #f5c6cb;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>XAMPP API Test</h1>
+
+    <div class="test" id="xampp-test">
+      <h3>Testing XAMPP Connection...</h3>
+      <p id="xampp-result">Loading...</p>
+    </div>
+
+    <div class="test" id="api-test">
+      <h3>Testing API Endpoints...</h3>
+      <p id="api-result">Loading...</p>
+    </div>
+
+    <script>
+             async function testXAMPP() {
+         try {
+           const response = await fetch(
+             "http://localhost/spcc_database/connect.php",
+             {
+               method: 'GET',
+               headers: {
+                 'Content-Type': 'application/json'
+               }
+             }
+           );
+          const result = await response.text();
+          document.getElementById(
+            "xampp-result"
+          ).innerHTML = `<span style="color: green;">✅ XAMPP is running! Response: ${result}</span>`;
+          document.getElementById("xampp-test").className = "test success";
+        } catch (error) {
+          document.getElementById(
+            "xampp-result"
+          ).innerHTML = `<span style="color: red;">❌ XAMPP Error: ${error.message}</span>`;
+          document.getElementById("xampp-test").className = "test error";
+        }
+      }
+
+      async function testAPI() {
+        try {
+          const response = await fetch(
+            "http://localhost/spcc_database/get_available_time_slots.php",
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                school_year: "2024-2025",
+                semester: "First Semester",
+                days: ["monday"],
+                prof_id: "1",
+                section_id: "1",
+              }),
+            }
+          );
+          const result = await response.json();
+          document.getElementById(
+            "api-result"
+          ).innerHTML = `<span style="color: green;">✅ API is working! Response: ${JSON.stringify(
+            result
+          )}</span>`;
+          document.getElementById("api-test").className = "test success";
+        } catch (error) {
+          document.getElementById(
+            "api-result"
+          ).innerHTML = `<span style="color: red;">❌ API Error: ${error.message}</span>`;
+          document.getElementById("api-test").className = "test error";
+        }
+      }
+
+      // Run tests
+      testXAMPP();
+      testAPI();
+    </script>
+  </body>
+</html>
