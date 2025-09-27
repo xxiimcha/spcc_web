@@ -15,9 +15,7 @@ const Reports = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // pagination state (teachers)
   const [tPage, setTPage] = useState(1);
-  // pagination state (subjects)
   const [sPage, setSPage] = useState(1);
 
   const fetchReports = async () => {
