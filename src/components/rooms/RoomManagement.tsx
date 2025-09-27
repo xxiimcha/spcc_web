@@ -7,14 +7,13 @@ import {
   Trash2,
   Users,
   MapPin,
-  Filter,
-  MoreVertical,
   ChevronDown,
   ChevronRight,
   Pencil,
   UserPlus,
   AlertTriangle,
   Eye,
+  MoreVertical,
 } from "lucide-react";
 import {
   Card,
@@ -30,7 +29,6 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
-  DialogFooter,
 } from "@/components/ui/dialog";
 import {
   AlertDialog,
@@ -47,6 +45,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
+  DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "@/components/ui/use-toast";
@@ -59,17 +58,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Label } from "@/components/ui/label";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 
-// Define types for our data
+/* ---------- Types ---------- */
+
 interface Room {
   id: number;
   number: number;
@@ -95,7 +86,8 @@ interface Section {
   strand: string;
 }
 
-// Add this new component at the top of the file
+/* ---------- Assign Section Dialog ---------- */
+
 interface RoomSectionDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -115,50 +107,35 @@ const RoomSectionDialog: React.FC<RoomSectionDialogProps> = ({
   const [selectedSection, setSelectedSection] = React.useState<string>("");
   const [isLoading, setIsLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const [loadingSections, setLoadingSections] = React.useState(false);
 
-  // Fetch sections when dialog opens
+  // Load ONLY sections that are NOT assigned to any room
   React.useEffect(() => {
-    const fetchSections = async () => {
+    const loadUnassignedSections = async () => {
+      setLoadingSections(true);
+      setError(null);
       try {
-        const response = await axios.get(
-          "http://localhost/spcc_database/sections.php"
-        );
-        if (response.data.success && Array.isArray(response.data.data)) {
-          // Get current room data to check assigned sections
-          const roomResponse = await axios.get(
-            `http://localhost/spcc_database/rooms.php?id=${roomId}`
-          );
-
-          if (roomResponse.data.success) {
-            const roomData = roomResponse.data.data;
-            const assignedSectionIds =
-              roomData.sections?.map((s: any) => s.section_id) || [];
-
-            // Filter out sections that are already assigned to this room
-            const availableSections = response.data.data.filter(
-              (section: Section) =>
-                !assignedSectionIds.includes(section.section_id)
-            );
-
-            setSections(availableSections);
-          } else {
-            setSections(response.data.data);
-          }
+        const { data } = await axios.get("http://localhost/spcc_database/sections.php");
+        if (!data?.success || !Array.isArray(data.data)) {
+          throw new Error("Invalid sections response");
         }
-      } catch (error) {
-        console.error("Error fetching sections:", error);
-        setError("Failed to load sections");
+
+        // API returns each section with a `rooms` array
+        const unassigned = data.data.filter(
+          (s: any) => !Array.isArray(s.rooms) || s.rooms.length === 0
+        );
+
+        setSections(unassigned);
+      } catch (e: any) {
+        setError(e?.message || "Failed to load sections");
+        setSections([]);
+      } finally {
+        setLoadingSections(false);
       }
     };
 
-    if (open) {
-      fetchSections();
-    }
-  }, [open, roomId]);
-
-  // This is a modified version of the RoomSectionDialog component that
-  // checks if a section is already assigned to a room before attempting
-  // to assign it again, preventing the 500 Internal Server Error.
+    if (open) loadUnassignedSections();
+  }, [open]);
 
   const handleAddSection = async () => {
     if (!selectedSection) return;
@@ -166,121 +143,102 @@ const RoomSectionDialog: React.FC<RoomSectionDialogProps> = ({
     setIsLoading(true);
     setError(null);
     try {
-      // First, get the current section data
-      const sectionResponse = await axios.get(
+      // Double-check the section is still unassigned
+      const secRes = await axios.get(
         `http://localhost/spcc_database/sections.php?id=${selectedSection}`
       );
+      if (!secRes.data?.success) throw new Error("Failed to fetch section data");
 
-      if (!sectionResponse.data.success) {
-        throw new Error("Failed to fetch section data");
-      }
+      const section = secRes.data.data;
 
-      const sectionData = sectionResponse.data.data;
-
-      // Get current room assignments for this section
-      const currentRoomIds = sectionData.rooms
-        ? Array.from(new Set(sectionData.rooms.map((room: any) => room.id)))
-        : [];
-
-      // Check if this section is already assigned to this room
-      if (currentRoomIds.includes(roomId)) {
-        onSectionAdded(); // Still refresh the parent component
-        onOpenChange(false);
+      // If it already has any room, block (prevents race conditions)
+      if (Array.isArray(section.rooms) && section.rooms.length > 0) {
         toast({
-          title: "Section Already Assigned",
-          description: "This section is already assigned to this room.",
+          title: "Section already assigned",
+          description: "Only unassigned sections can be added to a room.",
+          variant: "destructive",
         });
-        return; // Exit early - no need to make the API call
+        return;
       }
 
-      // Add the new room ID
-      currentRoomIds.push(roomId);
+      // Assign to this room
+      const payload = {
+        section_name: section.section_name,
+        grade_level: section.grade_level,
+        number_of_students: section.number_of_students ?? 0,
+        strand: section.strand ?? "",
+        room_ids: [roomId],
+      };
 
-      // Make sure all required fields are included in the update request
-      const response = await axios.put(
+      const resp = await axios.put(
         `http://localhost/spcc_database/sections.php?id=${selectedSection}`,
-        {
-          section_name: sectionData.section_name,
-          grade_level: sectionData.grade_level,
-          number_of_students: sectionData.number_of_students || 0,
-          strand: sectionData.strand || "",
-          room_ids: currentRoomIds,
-        }
+        payload
       );
 
-      if (response.data.status === "success") {
+      if (resp.data.status === "success") {
+        toast({ title: "Section assigned", description: "The section was added to this room." });
         onSectionAdded();
         onOpenChange(false);
-        toast({
-          title: "Section Added",
-          description:
-            "The section has been successfully assigned to the room.",
-        });
       } else {
-        throw new Error(response.data.message || "Failed to add section");
+        throw new Error(resp.data.message || "Failed to add section");
       }
-    } catch (error) {
-      console.error("Error adding section:", error);
-      setError(
-        error instanceof Error
-          ? error.message
-          : "Failed to add section. Please try again."
-      );
+    } catch (e: any) {
+      setError(e?.message || "Failed to add section. Please try again.");
     } finally {
       setIsLoading(false);
     }
   };
+
+  const nothingToAssign = !loadingSections && sections.length === 0;
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md rounded-2xl bg-gray-100 p-6">
+      <DialogContent className="max-w-md rounded-xl">
         <DialogHeader>
-          <DialogTitle className="text-xl font-semibold mb-2">
-            Add Section to Room {roomNumber}
-          </DialogTitle>
+          <DialogTitle>Add Section to Room {roomNumber}</DialogTitle>
+          <DialogDescription>
+            {nothingToAssign ? "All sections are already assigned to rooms." : "Select a section to assign to this room."}
+          </DialogDescription>
         </DialogHeader>
-        <div className="space-y-4">
-          {error && (
-            <Alert variant="destructive">
-              <AlertTriangle className="h-4 w-4" />
-              <AlertTitle>Error</AlertTitle>
-              <AlertDescription>{error}</AlertDescription>
-            </Alert>
-          )}
 
+        {error && (
+          <Alert variant="destructive" className="mb-3">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertTitle>Error</AlertTitle>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+
+        <div className="space-y-3">
           <div className="space-y-2">
-            <Label>Select Section</Label>
-            <Select value={selectedSection} onValueChange={setSelectedSection}>
+            <span className="text-sm font-medium">Section</span>
+            <Select
+              value={selectedSection}
+              onValueChange={setSelectedSection}
+              disabled={loadingSections || nothingToAssign}
+            >
               <SelectTrigger>
-                <SelectValue placeholder="Choose a section..." />
+                <SelectValue placeholder={loadingSections ? "Loading..." : "Choose a section..."} />
               </SelectTrigger>
               <SelectContent>
-                {sections.map((section) => (
-                  <SelectItem
-                    key={section.section_id}
-                    value={section.section_id.toString()}
-                  >
-                    {section.section_name} - Grade {section.grade_level}{" "}
-                    {section.strand}
+                {sections.map((s: any) => (
+                  <SelectItem key={s.section_id} value={s.section_id.toString()}>
+                    {s.section_name} • G{s.grade_level} {s.strand}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </div>
 
-          <div className="flex gap-2 mt-6">
-            <Button
-              type="button"
-              variant="outline"
-              className="flex-1 rounded-lg bg-gray-400 text-white hover:bg-gray-500"
-              onClick={() => onOpenChange(false)}
-            >
+          <div className="flex gap-2 pt-2">
+            <Button type="button" variant="outline" className="flex-1" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
             <Button
               type="button"
-              className="flex-1 rounded-lg bg-black text-white hover:bg-gray-800"
+              className="flex-1"
               onClick={handleAddSection}
-              disabled={isLoading || !selectedSection}
+              disabled={isLoading || !selectedSection || nothingToAssign}
             >
               {isLoading ? "Adding..." : "Add Section"}
             </Button>
@@ -290,6 +248,9 @@ const RoomSectionDialog: React.FC<RoomSectionDialogProps> = ({
     </Dialog>
   );
 };
+
+
+/* ---------- Page ---------- */
 
 const RoomManagement = () => {
   const [rooms, setRooms] = useState<Room[]>([]);
@@ -302,255 +263,164 @@ const RoomManagement = () => {
   const [expandedFloors, setExpandedFloors] = useState<Set<number>>(new Set());
   const [selectedFloor, setSelectedFloor] = useState<string>("all");
   const [sectionDialogOpen, setSectionDialogOpen] = useState(false);
-  const [selectedRoomForSection, setSelectedRoomForSection] =
-    useState<Room | null>(null);
+  const [selectedRoomForSection, setSelectedRoomForSection] = useState<Room | null>(null);
   const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
 
-  // Fetch rooms
+  // fetch
   const fetchRooms = async () => {
     setLoading(true);
     setError(null);
-
     try {
-      const response = await axios.get(
-        "http://localhost/spcc_database/rooms.php"
-      );
-
+      const response = await axios.get("http://localhost/spcc_database/rooms.php");
       if (response.data.success && Array.isArray(response.data.data)) {
         setRooms(response.data.data);
       } else {
         throw new Error("Invalid response format");
       }
     } catch (err) {
-      console.error("Error fetching rooms:", err);
+      console.error(err);
       setError("Failed to load rooms. Please try again later.");
-      setRooms([]); // Set empty array on error
+      setRooms([]);
     } finally {
       setLoading(false);
     }
   };
 
-  // Initial data loading
-  useEffect(() => {
-    fetchRooms();
-  }, []);
+  useEffect(() => { fetchRooms(); }, []);
 
-  // Handle form submission
+  // helpers
+  const getRoomTypeBadge = (type: string) =>
+    type === "Lecture"
+      ? "bg-blue-50 text-blue-700 border-blue-200"
+      : type === "Laboratory"
+      ? "bg-purple-50 text-purple-700 border-purple-200"
+      : "bg-gray-50 text-gray-700 border-gray-200";
+
+  const groupRoomsByFloor = (all: Room[]): FloorGroup[] => {
+    const map: Record<number, Room[]> = {};
+    all.forEach((r) => {
+      const floor = Math.floor(r.number / 100);
+      map[floor] = map[floor] || [];
+      map[floor].push(r);
+    });
+    return Object.entries(map)
+      .map(([floor, rs]) => ({ floor: Number(floor), rooms: rs.sort((a, b) => a.number - b.number) }))
+      .sort((a, b) => a.floor - b.floor);
+  };
+
+  const getUniqueFloors = (all: Room[]): number[] =>
+    Array.from(new Set(all.map((r) => Math.floor(r.number / 100)))).sort((a, b) => a - b);
+
+  const getFilteredRooms = (all: Room[]) => {
+    if (selectedFloor === "all") return all;
+    const fl = Number(selectedFloor);
+    return all.filter((r) => Math.floor(r.number / 100) === fl);
+  };
+
+  const formatOrdinal = (n: number) => {
+    const j = n % 10, k = n % 100;
+    if (j === 1 && k !== 11) return `${n}st`;
+    if (j === 2 && k !== 12) return `${n}nd`;
+    if (j === 3 && k !== 13) return `${n}rd`;
+    return `${n}th`;
+  };
+
+  const toggleFloor = (f: number) =>
+    setExpandedFloors((prev) => {
+      const s = new Set(prev);
+      s.has(f) ? s.delete(f) : s.add(f);
+      return s;
+    });
+
+  // actions
   const handleRoomCreated = () => {
     setIsFormOpen(false);
     fetchRooms();
-    toast({
-      title: "Room Created",
-      description: "The room has been successfully created.",
-    });
+    toast({ title: "Room Saved", description: "Room was created/updated." });
   };
 
-  // Open delete confirmation dialog
   const confirmDelete = (roomId: number) => {
     setRoomToDelete(roomId);
     setDeleteDialogOpen(true);
   };
 
-  // Delete room
   const deleteRoom = async () => {
     if (!roomToDelete) return;
-
     try {
       const response = await axios.delete(
         `http://localhost/spcc_database/rooms.php?id=${roomToDelete}`
       );
-
-      // Check if the response indicates success, even if it's a 404 (since the room is deleted)
-      if (
-        response.data.success ||
-        response.data.message?.includes("deleted successfully")
-      ) {
-        // Update the rooms state by filtering out the deleted room
-        setRooms((prevRooms) => prevRooms.filter((r) => r.id !== roomToDelete));
-
-        // Close the dialog and reset the roomToDelete state
+      if (response.data.success || response.data.message?.includes("deleted successfully")) {
+        setRooms((prev) => prev.filter((r) => r.id !== roomToDelete));
         setDeleteDialogOpen(false);
         setRoomToDelete(null);
-
-        toast({
-          title: "Room Deleted",
-          description: "The room has been successfully removed.",
-        });
+        toast({ title: "Room Deleted", description: "The room has been removed." });
       } else {
         throw new Error(response.data.message || "Failed to delete room");
       }
-    } catch (err) {
-      // If it's a 404 error and the room was successfully deleted, treat it as success
+    } catch (err: any) {
       if (axios.isAxiosError(err) && err.response?.status === 404) {
-        setRooms((prevRooms) => prevRooms.filter((r) => r.id !== roomToDelete));
+        setRooms((prev) => prev.filter((r) => r.id !== roomToDelete));
         setDeleteDialogOpen(false);
         setRoomToDelete(null);
-        toast({
-          title: "Room Deleted",
-          description: "The room has been successfully removed.",
-        });
+        toast({ title: "Room Deleted", description: "The room has been removed." });
         return;
       }
-
-      console.error("Error deleting room:", err);
+      console.error(err);
       toast({
         title: "Error",
-        description:
-          err instanceof Error
-            ? err.message
-            : "Failed to delete room. Please try again later.",
+        description: err?.message || "Failed to delete room.",
         variant: "destructive",
       });
     }
   };
 
-  // Get room type badge variant
-  const getRoomTypeBadge = (type: string) => {
-    switch (type) {
-      case "Lecture":
-        return "bg-blue-100 text-blue-800 border-blue-200";
-      case "Laboratory":
-        return "bg-purple-100 text-purple-800 border-purple-200";
-      default:
-        return "bg-gray-100 text-gray-800 border-gray-200";
-    }
-  };
+  const handleEditRoom = (room: Room) => { setSelectedRoom(room); setIsFormOpen(true); };
+  const handleAddSection = (room: Room) => { setSelectedRoomForSection(room); setSectionDialogOpen(true); };
 
-  // Group rooms by floor
-  const groupRoomsByFloor = (rooms: Room[]): FloorGroup[] => {
-    const floorGroups: { [key: number]: Room[] } = {};
-
-    rooms.forEach((room) => {
-      const floor = Math.floor(room.number / 100);
-      if (!floorGroups[floor]) {
-        floorGroups[floor] = [];
-      }
-      floorGroups[floor].push(room);
-    });
-
-    return Object.entries(floorGroups)
-      .map(([floor, rooms]) => ({
-        floor: parseInt(floor),
-        rooms: rooms.sort((a, b) => a.number - b.number),
-      }))
-      .sort((a, b) => a.floor - b.floor);
-  };
-
-  const toggleFloor = (floor: number) => {
-    setExpandedFloors((prev) => {
-      const newSet = new Set(prev);
-      if (newSet.has(floor)) {
-        newSet.delete(floor);
-      } else {
-        newSet.add(floor);
-      }
-      return newSet;
-    });
-  };
-
-  // Format ordinal numbers (1st, 2nd, 3rd, etc.)
-  const formatOrdinal = (num: number): string => {
-    const j = num % 10;
-    const k = num % 100;
-    if (j === 1 && k !== 11) {
-      return num + "st";
-    }
-    if (j === 2 && k !== 12) {
-      return num + "nd";
-    }
-    if (j === 3 && k !== 13) {
-      return num + "rd";
-    }
-    return num + "th";
-  };
-
-  // Get unique floors from rooms
-  const getUniqueFloors = (rooms: Room[]): number[] => {
-    const floors = new Set(rooms.map((room) => Math.floor(room.number / 100)));
-    return Array.from(floors).sort((a, b) => a - b);
-  };
-
-  // Filter rooms based on selected floor
-  const getFilteredRooms = (rooms: Room[]): Room[] => {
-    if (selectedFloor === "all") return rooms;
-    const floor = parseInt(selectedFloor);
-    return rooms.filter((room) => Math.floor(room.number / 100) === floor);
-  };
-
-  // Add this handler
-  const handleEditRoom = (room: Room) => {
-    setSelectedRoom(room);
-    setIsFormOpen(true);
-  };
-
-  // Add this handler:
-  const handleAddSection = (room: Room) => {
-    setSelectedRoomForSection(room);
-    setSectionDialogOpen(true);
-  };
-
-  // Add this function to fetch room details with sections
   const fetchRoomDetails = async (roomId: number) => {
     try {
-      const response = await axios.get(
-        `http://localhost/spcc_database/rooms.php?id=${roomId}`
-      );
-
-      if (response.data.success) {
-        setSelectedRoom(response.data.data);
-      } else {
-        throw new Error("Failed to fetch room details");
-      }
-    } catch (error) {
-      console.error("Error fetching room details:", error);
-      toast({
-        title: "Error",
-        description: "Failed to fetch room details. Please try again.",
-        variant: "destructive",
-      });
+      const response = await axios.get(`http://localhost/spcc_database/rooms.php?id=${roomId}`);
+      if (response.data.success) setSelectedRoom(response.data.data);
+      else throw new Error("Failed to fetch room details");
+    } catch (e) {
+      console.error(e);
+      toast({ title: "Error", description: "Failed to fetch room details.", variant: "destructive" });
     }
   };
 
-  // Add this function to handle view dialog
   const openViewDialog = (room: Room) => {
     setSelectedRoom(room);
     setIsViewDialogOpen(true);
     fetchRoomDetails(room.id);
   };
 
-  return (
-    <div className="container mx-auto py-4 px-4 sm:px-6 sm:py-6">
-      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center mb-4 sm:mb-6 gap-3">
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">
-            Room Management
-          </h1>
-          <p className="text-sm sm:text-base text-muted-foreground">
-            View and manage rooms for scheduling
-          </p>
-        </div>
+  /* ---------- Render ---------- */
 
-        {/* Action buttons and filters */}
-        <div className="flex flex-col sm:flex-row items-center gap-2">
+  return (
+    <div className="container mx-auto py-6 px-4 sm:px-6">
+      {/* Header */}
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between mb-6">
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-semibold">Room Management</h1>
+          <p className="text-sm text-muted-foreground">Organize rooms and their assigned sections.</p>
+        </div>
+        <div className="flex gap-2">
           <Select value={selectedFloor} onValueChange={setSelectedFloor}>
             <SelectTrigger className="w-[180px]">
               <SelectValue placeholder="Filter by floor" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Floors</SelectItem>
-              {getUniqueFloors(rooms).map((floor) => (
-                <SelectItem key={floor} value={floor.toString()}>
-                  {formatOrdinal(floor)} Floor
-                </SelectItem>
+              {getUniqueFloors(rooms).map((f) => (
+                <SelectItem key={f} value={String(f)}>{formatOrdinal(f)} Floor</SelectItem>
               ))}
             </SelectContent>
           </Select>
-
           <Button variant="outline" onClick={fetchRooms}>
             <RefreshCw className="mr-2 h-4 w-4" />
             Refresh
           </Button>
-
           <Button onClick={() => setIsFormOpen(true)}>
             <Plus className="mr-2 h-4 w-4" />
             New Room
@@ -558,9 +428,10 @@ const RoomManagement = () => {
         </div>
       </div>
 
+      {/* Body */}
       {loading ? (
         <div className="flex justify-center items-center h-64">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary" />
         </div>
       ) : error ? (
         <Card className="bg-destructive/10 border-destructive">
@@ -570,13 +441,13 @@ const RoomManagement = () => {
           </CardHeader>
         </Card>
       ) : getFilteredRooms(rooms).length === 0 ? (
-        <Card className="text-center p-4 sm:p-8">
+        <Card className="text-center p-8">
           <CardHeader>
             <CardTitle>No Rooms Found</CardTitle>
             <CardDescription>
               {selectedFloor !== "all"
-                ? "No rooms found on the selected floor."
-                : "There are no rooms available. Create a new room to get started."}
+                ? "No rooms on the selected floor."
+                : "Create a room to get started."}
             </CardDescription>
           </CardHeader>
           <CardFooter className="justify-center">
@@ -588,132 +459,112 @@ const RoomManagement = () => {
         </Card>
       ) : (
         <div className="space-y-6">
-          {groupRoomsByFloor(getFilteredRooms(rooms)).map((floorGroup) => (
-            <Card
-              key={floorGroup.floor}
-              className="overflow-hidden border-2 hover:border-primary/50 transition-colors"
-            >
-              <CardHeader className="pb-2 bg-muted/50">
-                <Button
-                  variant="ghost"
-                  className="w-full flex justify-between items-center p-0 hover:bg-transparent"
-                  onClick={() => toggleFloor(floorGroup.floor)}
-                >
-                  <div className="flex items-center gap-3">
-                    {expandedFloors.has(floorGroup.floor) ? (
-                      <ChevronDown className="h-5 w-5 text-primary" />
-                    ) : (
-                      <ChevronRight className="h-5 w-5 text-primary" />
-                    )}
-                    <div>
-                      <CardTitle className="text-xl font-bold">
-                        {formatOrdinal(floorGroup.floor)} Floor
-                      </CardTitle>
-                      <CardDescription className="text-sm">
-                        {floorGroup.rooms.length}{" "}
-                        {floorGroup.rooms.length === 1 ? "Room" : "Rooms"}
-                      </CardDescription>
+          {groupRoomsByFloor(getFilteredRooms(rooms)).map((grp) => (
+            <Card key={grp.floor} className="overflow-hidden border">
+              {/* Floor header */}
+              <div className="sticky top-0 z-10 bg-muted/40">
+                <CardHeader className="py-3">
+                  <button
+                    className="w-full flex items-center justify-between text-left"
+                    onClick={() => toggleFloor(grp.floor)}
+                  >
+                    <div className="flex items-center gap-3">
+                      {expandedFloors.has(grp.floor) ? (
+                        <ChevronDown className="h-5 w-5 text-primary" />
+                      ) : (
+                        <ChevronRight className="h-5 w-5 text-primary" />
+                      )}
+                      <div>
+                        <CardTitle className="text-lg">{formatOrdinal(grp.floor)} Floor</CardTitle>
+                        <CardDescription className="text-xs">
+                          {grp.rooms.length} {grp.rooms.length === 1 ? "Room" : "Rooms"}
+                        </CardDescription>
+                      </div>
                     </div>
-                  </div>
-                  <Badge variant="outline" className="text-sm">
-                    {floorGroup.rooms.length}{" "}
-                    {floorGroup.rooms.length === 1 ? "Room" : "Rooms"}
-                  </Badge>
-                </Button>
-              </CardHeader>
-              {expandedFloors.has(floorGroup.floor) && (
-                <CardContent className="pt-6">
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {floorGroup.rooms.map((room) => (
-                      <Card
-                        key={room.id}
-                        className="overflow-hidden hover:shadow-md transition-shadow"
-                      >
+                    <Badge variant="outline">{grp.rooms.length}</Badge>
+                  </button>
+                </CardHeader>
+              </div>
+
+              {/* Rooms grid */}
+              {expandedFloors.has(grp.floor) && (
+                <CardContent className="pt-4">
+                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                    {grp.rooms.map((room) => (
+                      <Card key={room.id} className="hover:shadow-sm transition-shadow">
                         <CardHeader className="pb-2">
-                          <div className="flex items-center justify-between">
-                            <div>
-                              <CardTitle className="text-lg font-semibold">
-                                Room {room.number}
-                              </CardTitle>
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <CardTitle className="text-base truncate">Room {room.number}</CardTitle>
                               <div className="mt-1">
-                                <Badge className={getRoomTypeBadge(room.type)}>
-                                  {room.type}
-                                </Badge>
+                                <Badge className={getRoomTypeBadge(room.type)}>{room.type}</Badge>
                               </div>
                             </div>
+
                             <DropdownMenu>
                               <DropdownMenuTrigger asChild>
-                                <Button variant="ghost" size="icon">
+                                <Button variant="ghost" size="icon" className="h-8 w-8">
                                   <MoreVertical className="h-4 w-4" />
                                 </Button>
                               </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end">
-                                <DropdownMenuItem
-                                  onClick={() => openViewDialog(room)}
-                                >
-                                  <Eye className="h-4 w-4 mr-2" />
-                                  View Details
+                              <DropdownMenuContent align="end" className="w-40">
+                                <DropdownMenuItem onClick={() => openViewDialog(room)}>
+                                  <Eye className="mr-2 h-4 w-4" />
+                                  View details
                                 </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => handleEditRoom(room)}>
+                                  <Pencil className="mr-2 h-4 w-4" />
+                                  Edit
+                                </DropdownMenuItem>
+                                <DropdownMenuSeparator />
                                 <DropdownMenuItem
-                                  className="text-destructive"
+                                  className="text-red-600 focus:text-red-700"
                                   onClick={() => confirmDelete(room.id)}
                                 >
-                                  <Trash2 className="h-4 w-4 mr-2" />
+                                  <Trash2 className="mr-2 h-4 w-4" />
                                   Delete
-                                </DropdownMenuItem>
-                                <DropdownMenuItem
-                                  onClick={() => handleEditRoom(room)}
-                                >
-                                  <Pencil className="h-4 w-4 mr-2" />
-                                  Edit
                                 </DropdownMenuItem>
                               </DropdownMenuContent>
                             </DropdownMenu>
                           </div>
                         </CardHeader>
-                        <CardContent>
-                          <div className="space-y-2">
-                            <div className="flex items-center gap-2">
-                              <Users className="h-4 w-4 text-muted-foreground" />
-                              <span className="text-sm">
-                                Capacity: {room.capacity} students
-                              </span>
+
+                        <CardContent className="space-y-3">
+                          <div className="flex flex-wrap gap-2 text-sm text-muted-foreground">
+                            <div className="inline-flex items-center gap-1.5">
+                              <Users className="h-4 w-4" />
+                              <span>{room.capacity} students</span>
                             </div>
-                            <div className="flex items-center gap-2">
-                              <MapPin className="h-4 w-4 text-muted-foreground" />
-                              <span className="text-sm">
-                                Room Type: {room.type}
-                              </span>
+                            <div className="inline-flex items-center gap-1.5">
+                              <MapPin className="h-4 w-4" />
+                              <span>{room.type}</span>
                             </div>
-                            {room.sections && room.sections.length > 0 ? (
-                              <div className="mt-2">
-                                <div className="text-sm font-medium mb-1">
-                                  Assigned Sections:
-                                </div>
-                                <div className="space-y-1">
-                                  {room.sections.map((section) => (
-                                    <div
-                                      key={section.section_id}
-                                      className="text-sm bg-muted p-2 rounded-md"
-                                    >
-                                      {section.section_name} - Grade{" "}
-                                      {section.grade_level} {section.strand}
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            ) : (
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                className="w-full mt-2"
-                                onClick={() => handleAddSection(room)}
-                              >
-                                <UserPlus className="h-4 w-4 mr-2" />
-                                Add Section
-                              </Button>
-                            )}
                           </div>
+
+                          {room.sections && room.sections.length > 0 ? (
+                            <div className="space-y-1.5">
+                              <div className="text-xs font-medium text-muted-foreground">
+                                Assigned Sections
+                              </div>
+                              <div className="flex flex-wrap gap-1">
+                                {room.sections.map((s) => (
+                                  <Badge key={s.section_id} variant="secondary" className="px-2 py-0.5">
+                                    {s.section_name} • G{s.grade_level} {s.strand}
+                                  </Badge>
+                                ))}
+                              </div>
+                            </div>
+                          ) : (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="w-full"
+                              onClick={() => handleAddSection(room)}
+                            >
+                              <UserPlus className="h-4 w-4 mr-2" />
+                              Add Section
+                            </Button>
+                          )}
                         </CardContent>
                       </Card>
                     ))}
@@ -725,31 +576,25 @@ const RoomManagement = () => {
         </div>
       )}
 
-      {/* Delete Confirmation Dialog */}
+      {/* Delete confirmation */}
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <AlertDialogContent className="max-w-[95vw] sm:max-w-md">
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete Room</AlertDialogTitle>
+            <AlertDialogTitle>Delete room?</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete this room? This action cannot be
-              undone.
+              This will permanently delete the room.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter className="flex-col sm:flex-row gap-2">
-            <AlertDialogCancel className="w-full sm:w-auto">
-              Cancel
-            </AlertDialogCancel>
-            <AlertDialogAction
-              onClick={deleteRoom}
-              className="bg-red-600 hover:bg-red-700 w-full sm:w-auto"
-            >
+            <AlertDialogCancel className="w-full sm:w-auto">Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={deleteRoom} className="bg-red-600 hover:bg-red-700 w-full sm:w-auto">
               Delete
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Room Form Modal */}
+      {/* Create / Edit Room */}
       <RoomForm
         open={isFormOpen}
         onOpenChange={(open) => {
@@ -760,7 +605,7 @@ const RoomManagement = () => {
         room={selectedRoom}
       />
 
-      {/* Room Section Dialog */}
+      {/* Assign Section */}
       <RoomSectionDialog
         open={sectionDialogOpen}
         onOpenChange={setSectionDialogOpen}
@@ -769,34 +614,35 @@ const RoomManagement = () => {
         onSectionAdded={fetchRooms}
       />
 
-      {/* Add View Room Dialog */}
+      {/* View Room */}
       {isViewDialogOpen && selectedRoom && (
         <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>
-          <DialogContent className="sm:max-w-[600px] bg-white">
+          <DialogContent className="sm:max-w-[560px]">
             <DialogHeader>
-              <DialogTitle className="text-xl font-bold">
-                Room Details
-              </DialogTitle>
+              <DialogTitle>Room {selectedRoom.number}</DialogTitle>
+              <DialogDescription>Room details and current assignments</DialogDescription>
             </DialogHeader>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 py-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 py-2">
               <div>
-                <h3 className="text-sm font-medium text-muted-foreground">
-                  Room Number
-                </h3>
-                <p className="text-base">{selectedRoom.number}</p>
+                <p className="text-xs text-muted-foreground">Type</p>
+                <p className="text-sm font-medium">{selectedRoom.type}</p>
               </div>
               <div>
-                <h3 className="text-sm font-medium text-muted-foreground">
-                  Room Type
-                </h3>
-                <p className="text-base">{selectedRoom.type}</p>
+                <p className="text-xs text-muted-foreground">Capacity</p>
+                <p className="text-sm font-medium">{selectedRoom.capacity} students</p>
               </div>
-              <div>
-                <h3 className="text-sm font-medium text-muted-foreground">
-                  Capacity
-                </h3>
-                <p className="text-base">{selectedRoom.capacity} students</p>
-              </div>
+              {selectedRoom.sections && selectedRoom.sections.length > 0 && (
+                <div className="sm:col-span-2">
+                  <p className="text-xs text-muted-foreground mb-1">Assigned Sections</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {selectedRoom.sections.map((s) => (
+                      <Badge key={s.section_id} variant="secondary">
+                        {s.section_name} • G{s.grade_level} {s.strand}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </DialogContent>
         </Dialog>
