@@ -192,7 +192,6 @@ const SubjectManagement = () => {
   const handleAddSubject = async (data: Omit<Subject, "id">) => {
     try {
       const subjectData = {
-        // old API (what your apiService type expects)
         subj_code: data.code,
         subj_name: data.name,
         subj_description: data.description || "",
@@ -200,7 +199,6 @@ const SubjectManagement = () => {
         subj_type: data.type ?? "Core",
         subj_hours_per_week: data.hoursPerWeek ?? 3,
 
-        // new clean keys (harmless extras; backend will ignore if not used)
         code: data.code,
         name: data.name,
         description: data.description || "",
@@ -228,7 +226,6 @@ const SubjectManagement = () => {
     if (!currentSubject) return;
     try {
       const subjectData = {
-        // old API
         subj_code: data.code,
         subj_name: data.name,
         subj_description: data.description || "",
