@@ -1,5 +1,16 @@
 import React, { useState, useEffect } from "react";
-import { Search, Plus, Edit, Trash2, Eye, KeyRound } from "lucide-react";
+import {
+  Search,
+  Plus,
+  Edit,
+  Trash2,
+  Eye,
+  KeyRound,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
+} from "lucide-react";
 import { apiService } from "@/services/apiService";
 
 import {
@@ -12,12 +23,7 @@ import {
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/components/ui/use-toast";
 import ProfessorForm from "./ProfessorForm";
 import CredentialsViewer from "./CredentialsViewer";
@@ -40,21 +46,28 @@ interface Professor {
   }[];
 }
 
+const PAGE_SIZES = [10, 25, 50];
+
 const ProfessorManagement = () => {
   const [professors, setProfessors] = useState<Professor[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+
+  // dialogs
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [isCredentialsDialogOpen, setIsCredentialsDialogOpen] = useState(false);
-  const [selectedProfessor, setSelectedProfessor] = useState<Professor | null>(
-    null
-  );
+  const [selectedProfessor, setSelectedProfessor] = useState<Professor | null>(null);
   const [isSuccessDialogOpen, setIsSuccessDialogOpen] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
+
+  // pagination (client-side)
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState<number>(PAGE_SIZES[0]);
+
   const { toast } = useToast();
 
   useEffect(() => {
@@ -66,10 +79,7 @@ const ProfessorManagement = () => {
       setLoading(true);
       setError(null);
       const response = await apiService.getProfessors();
-      console.log("Fetched professors:", response);
-
       if (response.success && Array.isArray(response.data)) {
-        // Map backend data structure to frontend expected structure
         const mappedProfessors = response.data.map((prof: any) => ({
           id: prof.prof_id?.toString() || prof.id?.toString(),
           name: prof.prof_name || prof.name,
@@ -82,21 +92,15 @@ const ProfessorManagement = () => {
         }));
         setProfessors(mappedProfessors);
       } else {
-        setProfessors([]); // Set to empty array if no valid data
-        if (!response.success) {
-          throw new Error(response.message || "Failed to fetch professors");
-        }
+        setProfessors([]);
+        if (!response.success) throw new Error(response.message || "Failed to fetch professors");
       }
     } catch (err) {
-      console.error("Error fetching professors:", err);
       setError("Failed to load professors. Please try again later.");
       toast({
         variant: "destructive",
         title: "Error",
-        description:
-          err instanceof Error
-            ? err.message
-            : "Could not fetch professors from the server.",
+        description: err instanceof Error ? err.message : "Could not fetch professors from the server.",
       });
     } finally {
       setLoading(false);
@@ -105,96 +109,56 @@ const ProfessorManagement = () => {
 
   const addProfessor = async (professorData: Omit<Professor, "id">) => {
     try {
-      const response = await fetch(
-        "http://localhost/spcc_database/professors.php",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(professorData),
-        }
-      );
-
+      const response = await fetch("http://localhost/spcc_database/professors.php", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(professorData),
+      });
       const result = await response.json();
+      if (result.status === "error") throw new Error(result.message || "Failed to add professor");
 
-      if (result.status === "error") {
-        throw new Error(result.message || "Failed to add professor");
-      }
-
-      // Handle different API response formats
-      if (result.data && result.data.id) {
-        setProfessors((prevProfessors) => [...prevProfessors, result.data]);
-      } else if (result.professor && result.professor.id) {
-        setProfessors((prevProfessors) => [
-          ...prevProfessors,
-          result.professor,
-        ]);
+      if (result.data?.id) {
+        setProfessors((prev) => [...prev, result.data]);
+      } else if (result.professor?.id) {
+        setProfessors((prev) => [...prev, result.professor]);
       } else {
-        fetchProfessors(); // Refetch all professors if we can't extract the new one
+        await fetchProfessors();
       }
 
       setSuccessMessage(`Professor ${professorData.name} added successfully!`);
       setIsSuccessDialogOpen(true);
       setIsAddDialogOpen(false);
-
       return true;
     } catch (err) {
-      console.error("Error adding professor:", err);
-      const errorMessage = err instanceof Error ? err.message : String(err);
       toast({
         variant: "destructive",
         title: "Error",
-        description: `Failed to add professor: ${errorMessage}`,
+        description: `Failed to add professor: ${err instanceof Error ? err.message : String(err)}`,
       });
       return false;
     }
   };
 
-  const updateProfessor = async (
-    id: string,
-    professorData: Omit<Professor, "id">
-  ) => {
+  const updateProfessor = async (id: string, professorData: Omit<Professor, "id">) => {
     try {
-      const response = await fetch(
-        `http://localhost/spcc_database/professors.php?id=${id}`,
-        {
-          method: "PUT",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(professorData),
-        }
-      );
-
+      const response = await fetch(`http://localhost/spcc_database/professors.php?id=${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(professorData),
+      });
       const result = await response.json();
+      if (result.status === "error") throw new Error(result.message || "Failed to update professor");
 
-      if (result.status === "error") {
-        throw new Error(result.message || "Failed to update professor");
-      }
-
-      setProfessors((prevProfessors) =>
-        prevProfessors.map((prof) =>
-          prof.id === id ? { ...professorData, id } : prof
-        )
-      );
-
+      setProfessors((prev) => prev.map((p) => (p.id === id ? { ...professorData, id } as Professor : p)));
       setIsEditDialogOpen(false);
-      setSuccessMessage(
-        `Professor ${professorData.name} updated successfully!`
-      );
+      setSuccessMessage(`Professor ${professorData.name} updated successfully!`);
       setIsSuccessDialogOpen(true);
-
       return true;
     } catch (err) {
-      console.error("Error updating professor:", err);
       toast({
         variant: "destructive",
         title: "Error",
-        description:
-          err instanceof Error
-            ? err.message
-            : "Failed to update professor. Please try again.",
+        description: err instanceof Error ? err.message : "Failed to update professor. Please try again.",
       });
       return false;
     }
@@ -202,38 +166,23 @@ const ProfessorManagement = () => {
 
   const deleteProfessor = async (id: string) => {
     try {
-      const response = await fetch(
-        `http://localhost/spcc_database/professors.php?id=${id}`,
-        {
-          method: "DELETE",
-        }
-      );
-
+      const response = await fetch(`http://localhost/spcc_database/professors.php?id=${id}`, {
+        method: "DELETE",
+      });
       const result = await response.json();
+      if (result.status === "error") throw new Error(result.message || "Failed to delete professor");
 
-      if (result.status === "error") {
-        throw new Error(result.message || "Failed to delete professor");
-      }
-
-      setProfessors((prevProfessors) =>
-        prevProfessors.filter((prof) => prof.id !== id)
-      );
-
+      setProfessors((prev) => prev.filter((p) => p.id !== id));
       setIsDeleteDialogOpen(false);
       const professorName = selectedProfessor?.name || "Professor";
       setSuccessMessage(`${professorName} deleted successfully!`);
       setIsSuccessDialogOpen(true);
-
       return true;
     } catch (err) {
-      console.error("Error deleting professor:", err);
       toast({
         variant: "destructive",
         title: "Error",
-        description:
-          err instanceof Error
-            ? err.message
-            : "Failed to delete professor. Please try again.",
+        description: err instanceof Error ? err.message : "Failed to delete professor. Please try again.",
       });
       return false;
     }
@@ -245,92 +194,71 @@ const ProfessorManagement = () => {
         `http://localhost/spcc_database/get_list_of_subjects.php?professor_id=${professorId}`
       );
       const data = await response.json();
-
-      console.log("Fetched professor subjects:", data);
-
-      if (data && data.status === "success" && data.subjects) {
-        // Update the selected professor with subjects data
-        setSelectedProfessor((prevProfessor) => {
-          if (prevProfessor && prevProfessor.id === professorId) {
-            return {
-              ...prevProfessor,
-              subjects: data.subjects.map((subj: any) => ({
-                id: subj.subj_id,
-                subj_name: subj.subj_name,
-                subj_code: subj.subj_code,
-              })),
-            };
-          }
-          return prevProfessor;
-        });
+      if (data?.status === "success" && data.subjects) {
+        setSelectedProfessor((prev) =>
+          prev && prev.id === professorId
+            ? {
+                ...prev,
+                subjects: data.subjects.map((s: any) => ({
+                  id: s.subj_id,
+                  subj_name: s.subj_name,
+                  subj_code: s.subj_code,
+                })),
+              }
+            : prev
+        );
       } else {
-        // If no subjects or error in response, set empty subjects array
-        setSelectedProfessor((prevProfessor) => {
-          if (prevProfessor && prevProfessor.id === professorId) {
-            return { ...prevProfessor, subjects: [] };
-          }
-          return prevProfessor;
-        });
+        setSelectedProfessor((prev) => (prev && prev.id === professorId ? { ...prev, subjects: [] } : prev));
       }
     } catch (err) {
-      console.error("Error fetching professor subjects:", err);
       toast({
         variant: "destructive",
         title: "Error",
-        description:
-          err instanceof Error
-            ? err.message
-            : "Could not fetch subjects for this professor.",
+        description: err instanceof Error ? err.message : "Could not fetch subjects for this professor.",
       });
-
-      // Even on error, update with empty subjects array to avoid undefined
-      setSelectedProfessor((prevProfessor) => {
-        if (prevProfessor && prevProfessor.id === professorId) {
-          return { ...prevProfessor, subjects: [] };
-        }
-        return prevProfessor;
-      });
+      setSelectedProfessor((prev) => (prev && prev.id === professorId ? { ...prev, subjects: [] } : prev));
     }
   };
 
   const filteredProfessors = professors.filter(
-    (professor) =>
-      professor.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      professor.email?.toLowerCase().includes(searchQuery.toLowerCase())
+    (prof) =>
+      prof.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      prof.email?.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const handleAddProfessor = async (data: Omit<Professor, "id">) => {
-    return await addProfessor(data);
-  };
+  // reset to page 1 when search or page size changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, pageSize]);
 
-  const handleUpdateProfessor = async (data: Omit<Professor, "id">) => {
-    if (selectedProfessor) {
-      const success = await updateProfessor(selectedProfessor.id ?? "", data);
-      return success;
-    }
-    return false;
-  };
+  // pagination math (client-side)
+  const totalItems = filteredProfessors.length;
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+  const pageStartIndex = (currentPage - 1) * pageSize;
+  const pageEndIndex = Math.min(pageStartIndex + pageSize, totalItems);
+  const paginatedProfessors = filteredProfessors.slice(pageStartIndex, pageEndIndex);
 
+  const gotoFirst = () => setCurrentPage(1);
+  const gotoPrev = () => setCurrentPage((p) => Math.max(1, p - 1));
+  const gotoNext = () => setCurrentPage((p) => Math.min(totalPages, p + 1));
+  const gotoLast = () => setCurrentPage(totalPages);
+
+  const handleAddProfessor = async (data: Omit<Professor, "id">) => addProfessor(data);
+  const handleUpdateProfessor = async (data: Omit<Professor, "id">) =>
+    selectedProfessor ? await updateProfessor(selectedProfessor.id ?? "", data) : false;
   const handleDeleteProfessor = async () => {
-    if (selectedProfessor) {
-      await deleteProfessor(selectedProfessor.id ?? "");
-    }
+    if (selectedProfessor) await deleteProfessor(selectedProfessor.id ?? "");
   };
 
   const openEditDialog = (professor: Professor) => {
     setSelectedProfessor(professor);
     setIsEditDialogOpen(true);
   };
-
   const openViewDialog = (professor: Professor) => {
     setSelectedProfessor(professor);
     setIsViewDialogOpen(true);
-    // Fetch subjects when opening view dialog
-    if (professor.id) {
-      fetchProfessorSubjects(professor.id);
-    }
+    if (professor.id) fetchProfessorSubjects(professor.id);
   };
-
   const openDeleteDialog = (professor: Professor) => {
     setSelectedProfessor(professor);
     setIsDeleteDialogOpen(true);
@@ -341,7 +269,6 @@ const ProfessorManagement = () => {
     if (subjectCount >= 6) return "text-amber-500 font-medium";
     return "text-emerald-600 font-medium";
   };
-
   const getWorkloadStatusText = (subjectCount: number) => {
     if (subjectCount >= 8) return `${subjectCount} subjects (Maximum)`;
     if (subjectCount >= 6) return `${subjectCount} subjects (Warning)`;
@@ -357,7 +284,6 @@ const ProfessorManagement = () => {
       </div>
     );
   }
-
   if (error) {
     return (
       <div className="w-full p-6 bg-white rounded-lg shadow-sm">
@@ -373,14 +299,10 @@ const ProfessorManagement = () => {
 
   return (
     <div className="w-full p-6 bg-white rounded-lg shadow-sm">
-      <div className="flex justify-between items-center mb-6">
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between mb-6">
         <h2 className="text-2xl font-bold">Professor Management</h2>
         <div className="flex gap-2">
-          <Button
-            variant="outline"
-            onClick={() => setIsCredentialsDialogOpen(true)}
-            className="flex items-center gap-2"
-          >
+          <Button variant="outline" onClick={() => setIsCredentialsDialogOpen(true)} className="flex items-center gap-2">
             <KeyRound className="h-4 w-4" /> View Credentials
           </Button>
           <Button onClick={() => setIsAddDialogOpen(true)}>
@@ -389,14 +311,32 @@ const ProfessorManagement = () => {
         </div>
       </div>
 
-      <div className="mb-6 relative">
-        <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-        <Input
-          placeholder="Search professors by name or email..."
-          className="pl-10"
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-        />
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-6">
+        <div className="relative grow">
+          <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Search professors by name or email..."
+            className="pl-10"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
+        </div>
+
+        {/* Page size selector */}
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-muted-foreground">Rows per page</span>
+          <select
+            className="border rounded-md px-2 py-1 text-sm"
+            value={pageSize}
+            onChange={(e) => setPageSize(Number(e.target.value))}
+          >
+            {PAGE_SIZES.map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
 
       <div className="rounded-md border">
@@ -411,12 +351,10 @@ const ProfessorManagement = () => {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {filteredProfessors.length > 0 ? (
-              filteredProfessors.map((professor) => (
+            {paginatedProfessors.length > 0 ? (
+              paginatedProfessors.map((professor) => (
                 <TableRow key={professor.id}>
-                  <TableCell className="font-medium">
-                    {professor.name}
-                  </TableCell>
+                  <TableCell className="font-medium">{professor.name}</TableCell>
                   <TableCell>{professor.email}</TableCell>
                   <TableCell>
                     <span
@@ -431,19 +369,16 @@ const ProfessorManagement = () => {
                   </TableCell>
                   <TableCell>
                     <div className="flex flex-wrap gap-1">
-                      {professor.qualifications &&
-                      professor.qualifications.length > 0 ? (
+                      {professor.qualifications && professor.qualifications.length > 0 ? (
                         <>
-                          {professor.qualifications
-                            .slice(0, 2)
-                            .map((qual, index) => (
-                              <span
-                                key={index}
-                                className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-secondary text-secondary-foreground"
-                              >
-                                {qual}
-                              </span>
-                            ))}
+                          {professor.qualifications.slice(0, 2).map((qual, i) => (
+                            <span
+                              key={i}
+                              className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-secondary text-secondary-foreground"
+                            >
+                              {qual}
+                            </span>
+                          ))}
                           {professor.qualifications.length > 2 && (
                             <span className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-muted text-muted-foreground">
                               +{professor.qualifications.length - 2} more
@@ -451,33 +386,19 @@ const ProfessorManagement = () => {
                           )}
                         </>
                       ) : (
-                        <span className="text-muted-foreground text-xs">
-                          No qualifications
-                        </span>
+                        <span className="text-muted-foreground text-xs">No qualifications</span>
                       )}
                     </div>
                   </TableCell>
                   <TableCell className="text-right">
                     <div className="flex justify-end gap-2">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => openViewDialog(professor)}
-                      >
+                      <Button variant="ghost" size="icon" onClick={() => openViewDialog(professor)}>
                         <Eye className="h-4 w-4" />
                       </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => openEditDialog(professor)}
-                      >
+                      <Button variant="ghost" size="icon" onClick={() => openEditDialog(professor)}>
                         <Edit className="h-4 w-4" />
                       </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => openDeleteDialog(professor)}
-                      >
+                      <Button variant="ghost" size="icon" onClick={() => openDeleteDialog(professor)}>
                         <Trash2 className="h-4 w-4 text-destructive" />
                       </Button>
                     </div>
@@ -486,12 +407,8 @@ const ProfessorManagement = () => {
               ))
             ) : (
               <TableRow>
-                <TableCell
-                  colSpan={5}
-                  className="text-center py-6 text-muted-foreground"
-                >
-                  No professors found. Try a different search or add a new
-                  professor.
+                <TableCell colSpan={5} className="text-center py-6 text-muted-foreground">
+                  {filteredProfessors.length === 0 ? "No professors found. Try a different search or add a new professor." : "No professors on this page."}
                 </TableCell>
               </TableRow>
             )}
@@ -499,13 +416,56 @@ const ProfessorManagement = () => {
         </Table>
       </div>
 
+      {/* Pagination footer */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mt-4">
+        <div className="text-sm text-muted-foreground">
+          Showing{" "}
+          <span className="font-medium">{totalItems === 0 ? 0 : pageStartIndex + 1}</span>–
+          <span className="font-medium">{pageEndIndex}</span> of{" "}
+          <span className="font-medium">{totalItems}</span> professors
+          {searchQuery ? (
+            <span>
+              {" "}
+              (filtered from <span className="font-medium">{professors.length}</span>)
+            </span>
+          ) : null}
+        </div>
+
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="icon" onClick={gotoFirst} disabled={currentPage === 1}>
+            <ChevronsLeft className="h-4 w-4" />
+          </Button>
+          <Button variant="outline" size="icon" onClick={gotoPrev} disabled={currentPage === 1}>
+            <ChevronLeft className="h-4 w-4" />
+          </Button>
+
+          <span className="text-sm px-2">
+            Page <span className="font-medium">{currentPage}</span> of{" "}
+            <span className="font-medium">{totalPages}</span>
+          </span>
+
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={gotoNext}
+            disabled={currentPage === totalPages || totalItems === 0}
+          >
+            <ChevronRight className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={gotoLast}
+            disabled={currentPage === totalPages || totalItems === 0}
+          >
+            <ChevronsRight className="h-4 w-4" />
+          </Button>
+        </div>
+      </div>
+
       {/* Add Professor Dialog */}
       {isAddDialogOpen && (
-        <ProfessorForm
-          open={isAddDialogOpen}
-          onOpenChange={setIsAddDialogOpen}
-          onSubmit={handleAddProfessor}
-        />
+        <ProfessorForm open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen} onSubmit={addProfessor} />
       )}
 
       {/* Edit Professor Dialog */}
@@ -528,80 +488,52 @@ const ProfessorManagement = () => {
         <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>
           <DialogContent className="sm:max-w-[600px] bg-white">
             <DialogHeader>
-              <DialogTitle className="text-xl font-bold">
-                Professor Details
-              </DialogTitle>
+              <DialogTitle className="text-xl font-bold">Professor Details</DialogTitle>
             </DialogHeader>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 py-4">
               <div>
-                <h3 className="text-sm font-medium text-muted-foreground">
-                  Name
-                </h3>
+                <h3 className="text-sm font-medium text-muted-foreground">Name</h3>
                 <p className="text-base">{selectedProfessor.name}</p>
               </div>
               <div>
-                <h3 className="text-sm font-medium text-muted-foreground">
-                  Email
-                </h3>
+                <h3 className="text-sm font-medium text-muted-foreground">Email</h3>
                 <p className="text-base">{selectedProfessor.email || "N/A"}</p>
               </div>
               <div>
-                <h3 className="text-sm font-medium text-muted-foreground">
-                  Phone
-                </h3>
+                <h3 className="text-sm font-medium text-muted-foreground">Phone</h3>
                 <p className="text-base">{selectedProfessor.phone || "N/A"}</p>
               </div>
-
               <div>
-                <h3 className="text-sm font-medium text-muted-foreground">
-                  Workload Status
-                </h3>
+                <h3 className="text-sm font-medium text-muted-foreground">Workload Status</h3>
                 <p
                   className={getWorkloadStatusClass(
-                    selectedProfessor.subjectCount ||
-                      selectedProfessor.subject_count ||
-                      0
+                    selectedProfessor.subjectCount || selectedProfessor.subject_count || 0
                   )}
                 >
                   {getWorkloadStatusText(
-                    selectedProfessor.subjectCount ||
-                      selectedProfessor.subject_count ||
-                      0
+                    selectedProfessor.subjectCount || selectedProfessor.subject_count || 0
                   )}
                 </p>
               </div>
 
               <div className="col-span-2">
-                <h3 className="text-sm font-medium text-muted-foreground mb-2">
-                  Qualifications
-                </h3>
+                <h3 className="text-sm font-medium text-muted-foreground mb-2">Qualifications</h3>
                 <div className="flex flex-wrap gap-2">
-                  {selectedProfessor.qualifications &&
-                  selectedProfessor.qualifications.length > 0 ? (
-                    selectedProfessor.qualifications.map(
-                      (qualification, index) => (
-                        <span
-                          key={index}
-                          className="inline-flex items-center px-3 py-1 rounded-full text-sm bg-secondary text-secondary-foreground"
-                        >
-                          {qualification}
-                        </span>
-                      )
-                    )
+                  {selectedProfessor.qualifications?.length ? (
+                    selectedProfessor.qualifications.map((q, i) => (
+                      <span key={i} className="inline-flex items-center px-3 py-1 rounded-full text-sm bg-secondary text-secondary-foreground">
+                        {q}
+                      </span>
+                    ))
                   ) : (
-                    <span className="text-muted-foreground">
-                      No qualifications listed
-                    </span>
+                    <span className="text-muted-foreground">No qualifications listed</span>
                   )}
                 </div>
               </div>
 
               <div className="col-span-2 mt-4">
-                <h3 className="text-sm font-medium text-muted-foreground mb-2">
-                  List of Subjects
-                </h3>
-                {selectedProfessor.subjects &&
-                selectedProfessor.subjects.length > 0 ? (
+                <h3 className="text-sm font-medium text-muted-foreground mb-2">List of Subjects</h3>
+                {selectedProfessor.subjects?.length ? (
                   <div className="border rounded-md">
                     <Table>
                       <TableHeader>
@@ -611,19 +543,17 @@ const ProfessorManagement = () => {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {selectedProfessor.subjects.map((subject) => (
-                          <TableRow key={subject.id}>
-                            <TableCell>{subject.subj_name}</TableCell>
-                            <TableCell>{subject.subj_code || "N/A"}</TableCell>
+                        {selectedProfessor.subjects.map((s) => (
+                          <TableRow key={s.id}>
+                            <TableCell>{s.subj_name}</TableCell>
+                            <TableCell>{s.subj_code || "N/A"}</TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
                     </Table>
                   </div>
                 ) : (
-                  <div className="text-muted-foreground py-2">
-                    No subjects assigned to this professor.
-                  </div>
+                  <div className="text-muted-foreground py-2">No subjects assigned to this professor.</div>
                 )}
               </div>
             </div>
@@ -636,24 +566,17 @@ const ProfessorManagement = () => {
         <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
           <DialogContent className="sm:max-w-[425px] bg-white">
             <DialogHeader>
-              <DialogTitle className="text-xl font-bold">
-                Confirm Deletion
-              </DialogTitle>
+              <DialogTitle className="text-xl font-bold">Confirm Deletion</DialogTitle>
             </DialogHeader>
             <div className="py-4">
               <p className="text-base">
                 Are you sure you want to delete professor{" "}
                 <span className="font-semibold">{selectedProfessor.name}</span>?
               </p>
-              <p className="text-sm text-muted-foreground mt-2">
-                This action cannot be undone.
-              </p>
+              <p className="text-sm text-muted-foreground mt-2">This action cannot be undone.</p>
             </div>
             <div className="flex justify-end gap-2 mt-4">
-              <Button
-                variant="outline"
-                onClick={() => setIsDeleteDialogOpen(false)}
-              >
+              <Button variant="outline" onClick={() => setIsDeleteDialogOpen(false)}>
                 Cancel
               </Button>
               <Button variant="destructive" onClick={handleDeleteProfessor}>
@@ -664,14 +587,12 @@ const ProfessorManagement = () => {
         </Dialog>
       )}
 
-      {/* Success Message Dialog */}
       <SuccessMessage
         isOpen={isSuccessDialogOpen}
         onClose={() => setIsSuccessDialogOpen(false)}
         message={successMessage}
       />
 
-      {/* Credentials Viewer Dialog */}
       <CredentialsViewer
         open={isCredentialsDialogOpen}
         onOpenChange={setIsCredentialsDialogOpen}
