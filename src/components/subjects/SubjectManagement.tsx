@@ -188,35 +188,77 @@ const SubjectManagement = () => {
   const gotoLast = () => setCurrentPage(totalPages);
 
   // Manual add submit
+  // CREATE
   const handleAddSubject = async (data: Omit<Subject, "id">) => {
     try {
       const subjectData = {
-        subj_name: data.name,
+        // old API (what your apiService type expects)
         subj_code: data.code,
-        subj_units: data.units || 3,
-        subj_type: data.type || "Core",
-        subj_hours_per_week: data.hoursPerWeek || 3,
+        subj_name: data.name,
+        subj_description: data.description || "",
+        subj_units: data.units ?? 3,
+        subj_type: data.type ?? "Core",
+        subj_hours_per_week: data.hoursPerWeek ?? 3,
+
+        // new clean keys (harmless extras; backend will ignore if not used)
+        code: data.code,
+        name: data.name,
+        description: data.description || "",
+        units: data.units ?? 3,
+        type: data.type ?? "Core",
+        hoursPerWeek: data.hoursPerWeek ?? 3,
       };
+
       const response = await apiService.createSubject(subjectData);
-      if (response.success) {
+      if (response.success || response.status === "success") {
         await fetchSubjects();
-        toast({
-          title: "Success",
-          description: response.message || "Subject added successfully",
-        });
+        toast({ title: "Success", description: response.message || "Subject added successfully" });
         setIsAddDialogOpen(false);
       } else {
         throw new Error(response.message || "Failed to add subject");
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
-      toast({
-        title: "Error",
-        description: `Failed to add subject: ${errorMessage}`,
-        variant: "destructive",
-      });
+      toast({ title: "Error", description: `Failed to add subject: ${errorMessage}`, variant: "destructive" });
     }
   };
+
+  // UPDATE
+  const handleEditSubject = async (data: Omit<Subject, "id">) => {
+    if (!currentSubject) return;
+    try {
+      const subjectData = {
+        // old API
+        subj_code: data.code,
+        subj_name: data.name,
+        subj_description: data.description || "",
+        subj_units: data.units ?? 3,
+        subj_type: data.type ?? "Core",
+        subj_hours_per_week: data.hoursPerWeek ?? 3,
+
+        // new clean keys
+        code: data.code,
+        name: data.name,
+        description: data.description || "",
+        units: data.units ?? 3,
+        type: data.type ?? "Core",
+        hoursPerWeek: data.hoursPerWeek ?? 3,
+      };
+
+      const response = await apiService.updateSubject(Number(currentSubject.id), subjectData);
+      if (response.success || response.status === "success") {
+        await fetchSubjects();
+        toast({ title: "Success", description: response.message || "Subject updated successfully" });
+        setIsEditDialogOpen(false);
+      } else {
+        throw new Error(response.message || "Failed to update subject");
+      }
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      toast({ title: "Error", description: `Failed to update subject: ${errorMessage}`, variant: "destructive" });
+    }
+  };
+
 
   // Bulk upload submit
   const handleBulkUpload = async (file: File) => {
@@ -260,37 +302,6 @@ const SubjectManagement = () => {
     setCurrentSubject(subject);
     setIsViewDialogOpen(true);
     if (subject.id) await fetchAssignedProfessors(subject.id);
-  };
-
-  const handleEditSubject = async (data: Omit<Subject, "id">) => {
-    if (!currentSubject) return;
-    try {
-      const subjectData = {
-        subj_name: data.name,
-        subj_code: data.code,
-        subj_units: data.units || 3,
-        subj_type: data.type || "Core",
-        subj_hours_per_week: data.hoursPerWeek || 3,
-      };
-      const response = await apiService.updateSubject(Number(currentSubject.id), subjectData);
-      if (response.success) {
-        await fetchSubjects();
-        toast({
-          title: "Success",
-          description: response.message || "Subject updated successfully",
-        });
-        setIsEditDialogOpen(false);
-      } else {
-        throw new Error(response.message || "Failed to update subject");
-      }
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      toast({
-        title: "Error",
-        description: `Failed to update subject: ${errorMessage}`,
-        variant: "destructive",
-      });
-    }
   };
 
   const handleDeleteSubject = async () => {
