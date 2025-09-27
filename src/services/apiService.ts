@@ -1,24 +1,16 @@
 import axios, { AxiosResponse } from "axios";
 
-// API Configuration
-const API_CONFIG = {
-  // Use proxy in development, direct URL in production
-  baseURL: import.meta.env.DEV ? "/api" : "http://localhost/spcc_database",
+const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost/spcc_database";
+
+const apiClient = axios.create({
+  baseURL: API_BASE,
   timeout: 10000,
-  headers: {
-    "Content-Type": "application/json",
-  },
-};
+  headers: { "Content-Type": "application/json" },
+});
 
-// Create axios instance with default config
-const apiClient = axios.create(API_CONFIG);
-
-// Request interceptor
 apiClient.interceptors.request.use(
   (config) => {
-    console.log(
-      `🚀 API Request: ${config.method?.toUpperCase()} ${config.url}`
-    );
+    console.log(`🚀 API Request: ${config.method?.toUpperCase()} ${config.baseURL}${config.url}`);
     return config;
   },
   (error) => {
@@ -27,23 +19,17 @@ apiClient.interceptors.request.use(
   }
 );
 
-// Response interceptor
 apiClient.interceptors.response.use(
   (response) => {
     console.log(`✅ API Response: ${response.status} ${response.config.url}`);
     return response;
   },
   (error) => {
-    console.error(
-      "❌ API Response Error:",
-      error.response?.status,
-      error.response?.data || error.message
-    );
+    console.error("❌ API Response Error:", error.response?.status, error.response?.data || error.message);
     return Promise.reject(error);
   }
 );
 
-// Type definitions for API responses
 export interface ApiResponse<T = any> {
   success?: boolean;
   status?: string;
@@ -97,31 +83,22 @@ export interface Schedule {
   days: string[];
 }
 
-// API Service Class
 class ApiService {
-  // Generic API call method
   async makeRequest<T>(
     method: "GET" | "POST" | "PUT" | "DELETE",
     endpoint: string,
     data?: any
   ): Promise<ApiResponse<T>> {
     try {
-      const response: AxiosResponse = await apiClient({
-        method,
-        url: endpoint,
-        data,
-      });
-
+      const response: AxiosResponse = await apiClient({ method, url: endpoint, data });
       return {
-        success:
-          response.data.status === "success" || response.data.success === true,
+        success: response.data.status === "success" || response.data.success === true,
         status: response.data.status,
         message: response.data.message,
-        data: response.data,
+        data: (response.data?.data ?? response.data) as T,
       };
     } catch (error) {
       console.error(`API Error (${method} ${endpoint}):`, error);
-
       if (axios.isAxiosError(error)) {
         return {
           success: false,
@@ -130,7 +107,6 @@ class ApiService {
           error: error.response?.data?.error || error.message,
         };
       }
-
       return {
         success: false,
         status: "error",
@@ -140,26 +116,16 @@ class ApiService {
     }
   }
 
-  // Subject API methods
   async getSubjects(): Promise<ApiResponse<Subject[]>> {
     const response = await this.makeRequest<any>("GET", "/subjects.php");
-    return {
-      ...response,
-      data:
-        response.data?.subjects || response.data?.data || response.data || [],
-    };
+    return { ...response, data: response.data?.subjects || response.data?.data || response.data || [] };
   }
 
-  async createSubject(
-    subject: Omit<Subject, "subj_id">
-  ): Promise<ApiResponse<Subject>> {
+  async createSubject(subject: Omit<Subject, "subj_id">): Promise<ApiResponse<Subject>> {
     return this.makeRequest<Subject>("POST", "/subjects.php", subject);
   }
 
-  async updateSubject(
-    id: number,
-    subject: Partial<Subject>
-  ): Promise<ApiResponse<Subject>> {
+  async updateSubject(id: number, subject: Partial<Subject>): Promise<ApiResponse<Subject>> {
     return this.makeRequest<Subject>("PUT", `/subjects.php?id=${id}`, subject);
   }
 
@@ -167,54 +133,33 @@ class ApiService {
     return this.makeRequest("DELETE", `/subjects.php?id=${id}`);
   }
 
-  // Professor API methods
   async getProfessors(): Promise<ApiResponse<Professor[]>> {
     const response = await this.makeRequest<any>("GET", "/professors.php");
-    return {
-      ...response,
-      data:
-        response.data?.professors || response.data?.data || response.data || [],
-    };
+    return { ...response, data: response.data?.professors || response.data?.data || response.data || [] };
   }
 
-  async createProfessor(
-    professor: Omit<Professor, "prof_id">
-  ): Promise<ApiResponse<Professor>> {
+  async createProfessor(professor: Omit<Professor, "prof_id">): Promise<ApiResponse<Professor>> {
     return this.makeRequest<Professor>("POST", "/professors.php", professor);
   }
 
-  async updateProfessor(
-    id: number,
-    professor: Partial<Professor>
-  ): Promise<ApiResponse<Professor>> {
-    return this.makeRequest<Professor>(
-      "PUT",
-      `/professors.php?id=${id}`,
-      professor
-    );
+  async updateProfessor(id: number, professor: Partial<Professor>): Promise<ApiResponse<Professor>> {
+    return this.makeRequest<Professor>("PUT", `/professors.php?id=${id}`, professor);
   }
 
   async deleteProfessor(id: number): Promise<ApiResponse> {
     return this.makeRequest("DELETE", `/professors.php?id=${id}`);
   }
 
-  // Room API methods
   async getRooms(): Promise<ApiResponse<Room[]>> {
     const response = await this.makeRequest<any>("GET", "/rooms.php");
-    return {
-      ...response,
-      data: response.data?.rooms || response.data?.data || response.data || [],
-    };
+    return { ...response, data: response.data?.rooms || response.data?.data || response.data || [] };
   }
 
   async createRoom(room: Omit<Room, "room_id">): Promise<ApiResponse<Room>> {
     return this.makeRequest<Room>("POST", "/rooms.php", room);
   }
 
-  async updateRoom(
-    id: number,
-    room: Partial<Room>
-  ): Promise<ApiResponse<Room>> {
+  async updateRoom(id: number, room: Partial<Room>): Promise<ApiResponse<Room>> {
     return this.makeRequest<Room>("PUT", `/rooms.php?id=${id}`, room);
   }
 
@@ -222,38 +167,21 @@ class ApiService {
     return this.makeRequest("DELETE", `/rooms.php?id=${id}`);
   }
 
-  // Section API methods
   async getSections(): Promise<ApiResponse<Section[]>> {
     const response = await this.makeRequest<any>("GET", "/sections.php");
-    return {
-      ...response,
-      data:
-        response.data?.sections || response.data?.data || response.data || [],
-    };
+    return { ...response, data: response.data?.sections || response.data?.data || response.data || [] };
   }
 
   async getRoomAssignedSections(): Promise<ApiResponse<Section[]>> {
-    const response = await this.makeRequest<any>(
-      "GET",
-      "/get_room_assigned_sections.php"
-    );
-    return {
-      ...response,
-      data:
-        response.data?.sections || response.data?.data || response.data || [],
-    };
+    const response = await this.makeRequest<any>("GET", "/get_room_assigned_sections.php");
+    return { ...response, data: response.data?.sections || response.data?.data || response.data || [] };
   }
 
-  async createSection(
-    section: Omit<Section, "section_id">
-  ): Promise<ApiResponse<Section>> {
+  async createSection(section: Omit<Section, "section_id">): Promise<ApiResponse<Section>> {
     return this.makeRequest<Section>("POST", "/sections.php", section);
   }
 
-  async updateSection(
-    id: number,
-    section: Partial<Section>
-  ): Promise<ApiResponse<Section>> {
+  async updateSection(id: number, section: Partial<Section>): Promise<ApiResponse<Section>> {
     return this.makeRequest<Section>("PUT", `/sections.php?id=${id}`, section);
   }
 
@@ -261,47 +189,24 @@ class ApiService {
     return this.makeRequest("DELETE", `/sections.php?id=${id}`);
   }
 
-  // Schedule API methods
-  async getSchedules(filters?: {
-    school_year?: string;
-    semester?: string;
-    professor_id?: number;
-  }): Promise<ApiResponse<Schedule[]>> {
+  async getSchedules(filters?: { school_year?: string; semester?: string; professor_id?: number }): Promise<ApiResponse<Schedule[]>> {
     const queryParams = new URLSearchParams();
-    if (filters?.school_year)
-      queryParams.append("school_year", filters.school_year);
+    if (filters?.school_year) queryParams.append("school_year", filters.school_year);
     if (filters?.semester) queryParams.append("semester", filters.semester);
-    if (filters?.professor_id)
-      queryParams.append("professor_id", String(filters.professor_id));
-
-    const url = `/schedule.php${
-      queryParams.toString() ? `?${queryParams.toString()}` : ""
-    }`;
+    if (filters?.professor_id) queryParams.append("professor_id", String(filters.professor_id));
+    const url = `/schedule.php${queryParams.toString() ? `?${queryParams.toString()}` : ""}`;
     const response = await this.makeRequest<any>("GET", url);
-    return {
-      ...response,
-      data:
-        response.data?.schedules || response.data?.data || response.data || [],
-    };
+    return { ...response, data: response.data?.schedules || response.data?.data || response.data || [] };
   }
 
   async bulkUploadSubjects(formData: FormData): Promise<ApiResponse> {
     try {
-      const response = await apiClient.post(
-        "/subjects_bulk_upload.php",      // <-- adjust if your endpoint differs
-        formData,
-        {
-          headers: {
-            // override global JSON header for this request
-            "Content-Type": "multipart/form-data",
-          },
-          timeout: 60000, // optional: large files can take longer
-        }
-      );
-
+      const response = await apiClient.post("/subjects_bulk_upload.php", formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+        timeout: 60000,
+      });
       return {
-        success:
-          response.data?.status === "success" || response.data?.success === true,
+        success: response.data?.status === "success" || response.data?.success === true,
         status: response.data?.status,
         message: response.data?.message,
         data: response.data?.data ?? response.data,
@@ -315,84 +220,46 @@ class ApiService {
           error: error.response?.data?.error || error.message,
         };
       }
-      return {
-        success: false,
-        status: "error",
-        message: "An unexpected error occurred",
-        error: String(error),
-      };
+      return { success: false, status: "error", message: "An unexpected error occurred", error: String(error) };
     }
   }
 
-  async createSchedule(
-    schedule: Omit<Schedule, "schedule_id">
-  ): Promise<ApiResponse<Schedule>> {
-    const result = await this.makeRequest<Schedule>(
-      "POST",
-      "/schedule.php",
-      schedule
-    );
-
-    // Automatically sync to Firebase after successful creation
+  async createSchedule(schedule: Omit<Schedule, "schedule_id">): Promise<ApiResponse<Schedule>> {
+    const result = await this.makeRequest<Schedule>("POST", "/schedule.php", schedule);
     if (result.success) {
       try {
         await this.syncToFirebase();
       } catch (error) {
-        console.warn(
-          "Failed to sync to Firebase after schedule creation:",
-          error
-        );
-        // Don't fail the entire operation if Firebase sync fails
+        console.warn("Failed to sync to Firebase after schedule creation:", error);
       }
     }
-
     return result;
   }
 
-  async updateSchedule(
-    id: number,
-    schedule: Partial<Schedule>
-  ): Promise<ApiResponse<Schedule>> {
-    const result = await this.makeRequest<Schedule>(
-      "PUT",
-      `/schedule.php?id=${id}`,
-      schedule
-    );
-
-    // Automatically sync to Firebase after successful update
+  async updateSchedule(id: number, schedule: Partial<Schedule>): Promise<ApiResponse<Schedule>> {
+    const result = await this.makeRequest<Schedule>("PUT", `/schedule.php?id=${id}`, schedule);
     if (result.success) {
       try {
         await this.syncToFirebase();
       } catch (error) {
-        console.warn(
-          "Failed to sync to Firebase after schedule update:",
-          error
-        );
+        console.warn("Failed to sync to Firebase after schedule update:", error);
       }
     }
-
     return result;
   }
 
   async deleteSchedule(id: number): Promise<ApiResponse> {
     const result = await this.makeRequest("DELETE", `/schedule.php?id=${id}`);
-
-    // Automatically sync to Firebase after successful deletion
     if (result.success) {
       try {
         await this.syncToFirebase();
       } catch (error) {
-        console.warn(
-          "Failed to sync to Firebase after schedule deletion:",
-          error
-        );
+        console.warn("Failed to sync to Firebase after schedule deletion:", error);
       }
     }
-
     return result;
   }
 
-  // Specialized scheduling methods
   async getAvailableTimeSlots(data: {
     school_year: string;
     semester: string;
@@ -421,7 +288,6 @@ class ApiService {
     return this.makeRequest("POST", "/validate_time_slots.php", data);
   }
 
-  // School Head API methods
   async getSchoolHeads(): Promise<ApiResponse> {
     return this.makeRequest("GET", "/school_head.php");
   }
@@ -438,7 +304,6 @@ class ApiService {
     return this.makeRequest("DELETE", `/school_head.php?id=${id}`);
   }
 
-  // Dashboard API methods
   async getDashboardActivities(): Promise<ApiResponse> {
     return this.makeRequest("GET", "/dashboard_activities.php");
   }
@@ -451,23 +316,16 @@ class ApiService {
     return this.makeRequest("GET", "/dashboard_workload.php");
   }
 
-  // Utility methods
   async testConnection(): Promise<ApiResponse> {
     return this.makeRequest("GET", "/test_connection_simple.php");
   }
 
-  // Get specific data lists
   async getSubjectProfessors(subjectId: number): Promise<ApiResponse> {
-    return this.makeRequest(
-      "GET",
-      `/get_subject_professors.php?subject_id=${subjectId}`
-    );
+    return this.makeRequest("GET", `/get_subject_professors.php?subject_id=${subjectId}`);
   }
 
   async getListOfSubjects(professorId?: number): Promise<ApiResponse> {
-    const url = professorId
-      ? `/get_list_of_subjects.php?professor_id=${professorId}`
-      : "/get_list_of_subjects.php";
+    const url = professorId ? `/get_list_of_subjects.php?professor_id=${professorId}` : "/get_list_of_subjects.php";
     return this.makeRequest("GET", url);
   }
 
@@ -483,18 +341,11 @@ class ApiService {
     return this.makeRequest("GET", "/get_subjects_without_rooms.php");
   }
 
-  // Advanced Schedule Optimization
   async optimizeSchedule(optimizationData: any): Promise<ApiResponse> {
-    return this.makeRequest(
-      "POST",
-      "/advanced_schedule_optimizer.php",
-      optimizationData
-    );
+    return this.makeRequest("POST", "/advanced_schedule_optimizer.php", optimizationData);
   }
 
-  // Firebase Sync Methods
   async syncToFirebase(): Promise<ApiResponse> {
-    // Use lightweight schedules-only sync for faster response
     return this.makeRequest("GET", "/sync_schedules_only.php");
   }
 
@@ -502,11 +353,7 @@ class ApiService {
     return this.makeRequest("GET", "/manual_sync.php");
   }
 
-  // Workload Balancer Methods
-  async analyzeWorkload(
-    schoolYear: string,
-    semester: string
-  ): Promise<ApiResponse> {
+  async analyzeWorkload(schoolYear: string, semester: string): Promise<ApiResponse> {
     return this.makeRequest("POST", "/workload_balancer.php", {
       action: "analyze",
       school_year: schoolYear,
@@ -514,11 +361,7 @@ class ApiService {
     });
   }
 
-  async balanceWorkload(
-    schoolYear: string,
-    semester: string,
-    options: any = {}
-  ): Promise<ApiResponse> {
+  async balanceWorkload(schoolYear: string, semester: string, options: any = {}): Promise<ApiResponse> {
     return this.makeRequest("POST", "/workload_balancer.php", {
       action: "balance",
       school_year: schoolYear,
@@ -527,10 +370,7 @@ class ApiService {
     });
   }
 
-  async getWorkloadRecommendations(
-    schoolYear: string,
-    semester: string
-  ): Promise<ApiResponse> {
+  async getWorkloadRecommendations(schoolYear: string, semester: string): Promise<ApiResponse> {
     return this.makeRequest("POST", "/workload_balancer.php", {
       action: "recommendations",
       school_year: schoolYear,
@@ -539,6 +379,5 @@ class ApiService {
   }
 }
 
-// Export singleton instance
 export const apiService = new ApiService();
 export default apiService;

@@ -1,4 +1,4 @@
-import { apiService } from "./apiService";
+import { apiService, ApiResponse } from "./apiService";
 
 export interface LoginCredentials {
   username: string;
@@ -18,132 +18,90 @@ export interface AuthResponse {
   error?: string;
 }
 
-interface SchoolHeadAuthData {
-  user: {
-    id: string;
-    username: string;
-    email: string;
-    name: string;
-  };
-}
-
 class AuthService {
-  // Verify admin credentials (you can expand this to use a real admin table)
-  async verifyAdminCredentials(
-    credentials: LoginCredentials
-  ): Promise<AuthResponse> {
+  async verifyAdminCredentials(credentials: LoginCredentials): Promise<AuthResponse> {
     try {
-      // For now, using hardcoded admin credentials
-      // In production, you should create an admin table and verify against it
-      if (
-        credentials.username === "admin" &&
-        credentials.password === "admin123"
-      ) {
+      const response = await apiService.makeRequest<ApiResponse<any>>(
+        "POST",
+        "/admin/auth.php",
+        credentials
+      );
+      const u = (response.data as any)?.user;
+      if (response.success && u) {
         return {
           success: true,
           user: {
-            id: "1",
-            username: "admin",
+            id: u.id,
+            username: u.username,
             role: "admin",
-            email: "admin@spcc.edu.ph",
-            name: "System Administrator",
+            email: u.email,
+            name: u.name,
           },
         };
       }
-
       return {
         success: false,
-        message: "Invalid admin credentials",
+        message: response.message || response.error || "Invalid admin credentials",
       };
     } catch (error) {
-      return {
-        success: false,
-        error: "Failed to verify admin credentials",
-      };
+      console.error("Admin auth error:", error);
+      return { success: false, error: "Failed to verify admin credentials" };
     }
   }
 
-  // Verify school head credentials against the database using existing endpoint
-  async verifySchoolHeadCredentials(
-    credentials: LoginCredentials
-  ): Promise<AuthResponse> {
+  async verifySchoolHeadCredentials(credentials: LoginCredentials): Promise<AuthResponse> {
     try {
-      // Use the API service for school head authentication
-      const response = await apiService.makeRequest<SchoolHeadAuthData>(
+      const response = await apiService.makeRequest<ApiResponse<any>>(
         "POST",
         "/auth_school_head.php",
         credentials
       );
-
-      if (response.success && response.data?.user) {
+      const u = (response.data as any)?.user;
+      if (response.success && u) {
         return {
           success: true,
           user: {
-            id: response.data.user.id,
-            username: response.data.user.username,
+            id: u.id,
+            username: u.username,
             role: "school_head",
-            email: response.data.user.email,
-            name: response.data.user.name,
+            email: u.email,
+            name: u.name,
           },
         };
-      } else {
-        return {
-          success: false,
-          message: response.message || "Invalid username or password",
-        };
       }
+      return { success: false, message: response.message || "Invalid username or password" };
     } catch (error) {
-      console.error("Error verifying school head credentials:", error);
-      return {
-        success: false,
-        error: "Failed to verify credentials. Please try again.",
-      };
+      console.error("School head auth error:", error);
+      return { success: false, error: "Failed to verify credentials. Please try again." };
     }
   }
 
-  // Main login method that tries both admin and school head authentication
   async login(credentials: LoginCredentials): Promise<AuthResponse> {
     try {
-      // First try admin authentication
       const adminResult = await this.verifyAdminCredentials(credentials);
-      if (adminResult.success) {
-        return adminResult;
-      }
-
-      // If not admin, try school head authentication
-      const schoolHeadResult = await this.verifySchoolHeadCredentials(
-        credentials
-      );
-      return schoolHeadResult;
+      if (adminResult.success) return adminResult;
+      return await this.verifySchoolHeadCredentials(credentials);
     } catch (error) {
       console.error("Login error:", error);
-      return {
-        success: false,
-        error: "An error occurred during login. Please try again.",
-      };
+      return { success: false, error: "An error occurred during login. Please try again." };
     }
   }
 
-  // Logout method
   logout(): void {
-    // Clear any stored authentication data
     localStorage.removeItem("user");
     localStorage.removeItem("role");
     localStorage.removeItem("authToken");
   }
 
-  // Check if user is authenticated
   isAuthenticated(): boolean {
     const user = localStorage.getItem("user");
     const role = localStorage.getItem("role");
     return !!(user && role);
   }
 
-  // Get current user from localStorage
   getCurrentUser() {
     const userStr = localStorage.getItem("user");
     const role = localStorage.getItem("role");
-
     if (userStr && role) {
       try {
         const user = JSON.parse(userStr);
