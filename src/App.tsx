@@ -15,6 +15,8 @@ const Admin = lazy(() => import("./pages/Admin"));
 const Settings = lazy(() => import("./pages/Settings"));
 const Sections = lazy(() => import("./pages/Sections"));
 const Rooms = lazy(() => import("./pages/Rooms"));
+// 👇 NEW: the create-schedule page
+const ScheduleNew = lazy(() => import("./pages/ScheduleNew"));
 
 // Protected Route Component
 const ProtectedRoute = ({
@@ -83,6 +85,7 @@ const AppRoutes = () => {
                   <Route path="subjects" element={<Subjects />} />
                   <Route path="sections" element={<Sections />} />
                   <Route path="scheduling" element={<Scheduling />} />
+                  <Route path="scheduling/new" element={<ScheduleNew />} />
                 </Routes>
               </AppLayout>
             ) : isAuthenticated && user?.role === "admin" ? (
