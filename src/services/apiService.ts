@@ -83,6 +83,28 @@ export interface Schedule {
   days: string[];
 }
 
+/** NEW: types for auto-generation */
+export interface AutoGenPayload {
+  school_year: string;
+  semester: string;
+  days: string[];
+  startTime: string;
+  endTime: string;
+  slotMinutes: number;
+  maxDailyLoad?: number;
+  onlySectionsWithAssignedRooms: boolean;
+  preventSameTimeSameSection: boolean;
+  preventProfDoubleBooking: boolean;
+  preventDuplicateSubjectPerSection: boolean;
+  subjectWeeklyHourCap: number;
+}
+
+export interface AutoGenResult {
+  inserted: number;
+  skipped: number;
+  details?: any;
+}
+
 class ApiService {
   async makeRequest<T>(
     method: "GET" | "POST" | "PUT" | "DELETE",
@@ -376,6 +398,19 @@ class ApiService {
       school_year: schoolYear,
       semester: semester,
     });
+  }
+
+  /** NEW: call the backend auto-generation endpoint (inserts schedules) */
+  async autoGenerateSchedules(payload: AutoGenPayload): Promise<ApiResponse<AutoGenResult>> {
+    const result = await this.makeRequest<AutoGenResult>("POST", "/schedule_autogen.php", payload);
+    if (result.success) {
+      try {
+        await this.syncToFirebase();
+      } catch (error) {
+        console.warn("Failed to sync to Firebase after auto-generate:", error);
+      }
+    }
+    return result;
   }
 }
 
