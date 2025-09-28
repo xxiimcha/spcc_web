@@ -86,7 +86,6 @@ const scheduleFormSchema = z
     message: "Room is required for onsite schedules",
     path: ["room"],
   })
-  // 🚫 Block lunch overlap for face-to-face classes
   .refine(
     (data) => {
       if (data.scheduleType !== "Onsite") return true;
@@ -176,7 +175,9 @@ const ScheduleForm: React.FC<ScheduleFormProps> = ({
   const navigate = useNavigate();
 
   const [professors, setProfessors] = useState<Professor[]>([]);
+  const [filteredProfessors, setFilteredProfessors] = useState<Professor[]>([]); // ✅ profs for selected subject (and section)
   const [subjects, setSubjects] = useState<Subject[]>([]);
+  const [filteredSubjects, setFilteredSubjects] = useState<Subject[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
   const [sections, setSections] = useState<Section[]>([]);
   const [allSchedules, setAllSchedules] = useState<NormSchedule[]>([]);
@@ -188,6 +189,8 @@ const ScheduleForm: React.FC<ScheduleFormProps> = ({
     sections: false,
     schedules: false,
     submission: false,
+    sectionSubjects: false,
+    subjectProfessors: false, // ✅ loading state for profs assigned to subject
   });
 
   const [conflicts, setConflicts] = useState<string[]>([]);
@@ -284,9 +287,9 @@ const ScheduleForm: React.FC<ScheduleFormProps> = ({
     (async () => {
       await Promise.all([
         fetchProfessors(),
-        fetchSubjects(),
         fetchRooms(),
         fetchSections(),
+        fetchSubjects(),
       ]);
       await loadSchedules();
     })();
@@ -295,6 +298,108 @@ const ScheduleForm: React.FC<ScheduleFormProps> = ({
   useEffect(() => {
     loadSchedules();
   }, [settings.schoolYear, settings.semester]);
+
+  // SECTION -> SUBJECTS
+  useEffect(() => {
+    const sid = watched.section;
+    form.setValue("subjectId", "");
+    form.setValue("professorId", ""); // also clear professor when section changes
+    setFilteredProfessors([]);        // clear list until subject chosen
+
+    if (!sid) {
+      setFilteredSubjects(subjects);
+      return;
+    }
+
+    (async () => {
+      setLoading((p) => ({ ...p, sectionSubjects: true }));
+      try {
+        const res = await apiService.getSectionSubjects?.(sid);
+        if (res?.success && Array.isArray(res.data)) {
+          const mapped: Subject[] = res.data.map((s: any) =>
+            typeof s === "object"
+              ? {
+                  id: (s.subj_id || s.id).toString(),
+                  code: s.subj_code || s.code || "No Code",
+                  name: s.subj_name || s.name || "No Name",
+                }
+              : subjects.find((x) => x.id === String(s)) || {
+                  id: String(s),
+                  code: String(s),
+                  name: String(s),
+                }
+          );
+          setFilteredSubjects(mapped);
+        } else {
+          const sec = sections.find((x) => x.id === sid);
+          const secIds: string[] = Array.isArray((sec as any)?.subject_ids)
+            ? (sec as any).subject_ids.map((x: any) => String(x))
+            : [];
+          if (secIds.length) {
+            setFilteredSubjects(subjects.filter((s) => secIds.includes(s.id)));
+          } else {
+            setFilteredSubjects(subjects);
+          }
+        }
+      } catch {
+        setFilteredSubjects(subjects);
+      } finally {
+        setLoading((p) => ({ ...p, sectionSubjects: false }));
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [watched.section, sections, subjects]);
+
+  // SUBJECT -> PROFESSORS
+  // SUBJECT -> PROFESSORS
+useEffect(() => {
+  const sid = watched.section;
+  const subId = watched.subjectId;
+  form.setValue("professorId", ""); // clear previous prof when subject changes
+
+  if (!subId) {
+    setFilteredProfessors([]);
+    return;
+  }
+
+  (async () => {
+    setLoading((p) => ({ ...p, subjectProfessors: true }));
+    try {
+      // try subject + section first, then subject-only
+      const res =
+        (await apiService.getSubjectProfessors?.(subId, sid)) ??
+        (await apiService.getSubjectProfessors?.(subId));
+
+      if (res?.success) {
+        // ✅ accept multiple response shapes
+        const raw =
+          Array.isArray(res.data)
+            ? res.data
+            : Array.isArray((res.data as any)?.professors)
+            ? (res.data as any).professors
+            : Array.isArray((res.data as any)?.data)
+            ? (res.data as any).data
+            : [];
+
+        const mapped: Professor[] = raw.map((p: any) => ({
+          id: (p.prof_id || p.id || "").toString(),
+          name: p.prof_name || p.name || "Unknown Professor",
+          subjectCount: parseInt(p.subject_count || p.subjectCount || "0"),
+        }));
+
+        setFilteredProfessors(mapped);
+      } else {
+        setFilteredProfessors([]); // explicit none if API says no
+      }
+    } catch {
+      setFilteredProfessors([]);
+    } finally {
+      setLoading((p) => ({ ...p, subjectProfessors: false }));
+    }
+  })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [watched.subjectId, watched.section]);
+
 
   const fetchProfessors = async () => {
     setLoading((p) => ({ ...p, professors: true }));
@@ -321,15 +426,15 @@ const ScheduleForm: React.FC<ScheduleFormProps> = ({
     try {
       const res = await apiService.getSubjects();
       if (res.success && Array.isArray(res.data)) {
-        setSubjects(
-          res.data
-            .filter((s: any) => s && (s.subj_id || s.id))
-            .map((s: any) => ({
-              id: (s.subj_id || s.id).toString(),
-              code: s.subj_code || s.code || "No Code",
-              name: s.subj_name || s.name || "No Name",
-            }))
-        );
+        const mapped: Subject[] = res.data
+          .filter((s: any) => s && (s.subj_id || s.id))
+          .map((s: any) => ({
+            id: (s.subj_id || s.id).toString(),
+            code: s.subj_code || s.code || "No Code",
+            name: s.subj_name || s.name || "No Name",
+          }));
+        setSubjects(mapped);
+        setFilteredSubjects(mapped);
       }
     } finally {
       setLoading((p) => ({ ...p, subjects: false }));
@@ -379,6 +484,9 @@ const ScheduleForm: React.FC<ScheduleFormProps> = ({
                   capacity: parseInt(room.capacity || "0"),
                 }))
               : [],
+            ...(Array.isArray(section.subject_ids)
+              ? { subject_ids: section.subject_ids }
+              : {}),
           }))
         );
       }
@@ -423,10 +531,10 @@ const ScheduleForm: React.FC<ScheduleFormProps> = ({
     }
   };
 
-  const selectedProfessor = useMemo(
-    () => professors.find((p) => p.id === watched.professorId),
-    [professors, watched.professorId]
-  );
+  const selectedProfessor = useMemo(() => {
+    const pool = filteredProfessors.length ? filteredProfessors : professors;
+    return pool.find((p) => p.id === watched.professorId);
+  }, [filteredProfessors, professors, watched.professorId]);
 
   useEffect(() => {
     checkConflictsAndSuggest();
@@ -459,7 +567,6 @@ const ScheduleForm: React.FC<ScheduleFormProps> = ({
         errs.push("This subject is already scheduled for the selected section.");
     }
 
-    // lunch constraint for F2F
     if (scheduleType === "Onsite" && start !== undefined && end !== undefined) {
       const ls = toMin(LUNCH_START);
       const le = toMin(LUNCH_END);
@@ -550,7 +657,6 @@ const ScheduleForm: React.FC<ScheduleFormProps> = ({
       ) {
         const tEnd = t + desiredDurationMin;
 
-        // skip lunch overlap for onsite
         if (isOnsiteLocal && overlaps(t, tEnd, lunchStart, lunchEnd)) continue;
 
         const sectionClash = dayScheds.some(
@@ -611,6 +717,8 @@ const ScheduleForm: React.FC<ScheduleFormProps> = ({
           professorId: "",
           section: "",
         });
+        setFilteredSubjects(subjects);
+        setFilteredProfessors([]);
       } else {
         setErrorMessage(response.message || "Failed to create schedule");
         setShowError(true);
@@ -636,19 +744,22 @@ const ScheduleForm: React.FC<ScheduleFormProps> = ({
   // ---------- Sidebar (read-only list) ----------
   const profMap = useMemo(
     () =>
-      professors.reduce<Record<string, string>>((acc, p) => {
+      [...professors, ...filteredProfessors].reduce<Record<string, string>>((acc, p) => {
         acc[p.id] = p.name;
         return acc;
       }, {}),
-    [professors]
+    [professors, filteredProfessors]
   );
   const subjMap = useMemo(
     () =>
-      subjects.reduce<Record<string, { code: string; name: string }>>((acc, s) => {
-        acc[s.id] = { code: s.code, name: s.name };
-        return acc;
-      }, {}),
-    [subjects]
+      [...subjects, ...filteredSubjects].reduce<Record<string, { code: string; name: string }>>(
+        (acc, s) => {
+          acc[s.id] = { code: s.code, name: s.name };
+          return acc;
+        },
+        {}
+      ),
+    [subjects, filteredSubjects]
   );
   const sectionMap = useMemo(
     () =>
@@ -691,9 +802,7 @@ const ScheduleForm: React.FC<ScheduleFormProps> = ({
 
   return (
     <div className="min-h-screen bg-gray-50 py-6 px-4">
-      {/* Wider container and wider form column */}
       <div className="mx-auto w-full max-w-[88rem]">
-        {/* Top toolbar with back action */}
         <div className="mb-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Button
@@ -714,7 +823,6 @@ const ScheduleForm: React.FC<ScheduleFormProps> = ({
           </div>
         </div>
 
-        {/* Page header */}
         <div className="mb-6 flex items-start justify-between gap-4">
           <div>
             <h1 className="text-2xl font-bold flex items-center gap-2">
@@ -727,9 +835,7 @@ const ScheduleForm: React.FC<ScheduleFormProps> = ({
           </div>
         </div>
 
-        {/* 12-col layout; form is wider (8) and sidebar (4) */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          {/* LEFT: form */}
           <div className="lg:col-span-8">
             <Card className="shadow">
               <CardHeader className="pb-2">
@@ -741,7 +847,6 @@ const ScheduleForm: React.FC<ScheduleFormProps> = ({
               <CardContent className="space-y-8">
                 <Form {...form}>
                   <form id="schedule-form" onSubmit={form.handleSubmit(onValid, onInvalid)} className="space-y-8">
-                    {/* Term (read-only) */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 p-4 bg-blue-50 rounded-lg">
                       <FormField
                         control={form.control}
@@ -779,7 +884,6 @@ const ScheduleForm: React.FC<ScheduleFormProps> = ({
                       />
                     </div>
 
-                    {/* Class & Subject */}
                     <div className="space-y-4">
                       <div className="text-sm font-medium text-muted-foreground">Class &amp; Subject</div>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -792,7 +896,12 @@ const ScheduleForm: React.FC<ScheduleFormProps> = ({
                                 <Users className="h-4 w-4" />
                                 Section
                               </FormLabel>
-                              <Select onValueChange={field.onChange} defaultValue={field.value}>
+                              <Select
+                                onValueChange={(v) => {
+                                  field.onChange(v);
+                                }}
+                                defaultValue={field.value}
+                              >
                                 <FormControl>
                                   <SelectTrigger>
                                     {loading.sections ? <span>Loading sections...</span> : <SelectValue placeholder="Select a section" />}
@@ -819,14 +928,22 @@ const ScheduleForm: React.FC<ScheduleFormProps> = ({
                           render={({ field }) => (
                             <FormItem>
                               <FormLabel>Subject</FormLabel>
-                              <Select onValueChange={field.onChange} defaultValue={field.value}>
+                              <Select
+                                onValueChange={(v) => {
+                                  field.onChange(v);
+                                }}
+                                value={field.value}
+                              >
                                 <FormControl>
                                   <SelectTrigger>
-                                    {loading.subjects ? <span>Loading subjects...</span> : <SelectValue placeholder="Select a subject" />}
+                                    {loading.sectionSubjects
+                                      ? <span>Loading section subjects...</span>
+                                      : <SelectValue placeholder={watched.section ? "Select a subject" : "Pick a section first"} />
+                                    }
                                   </SelectTrigger>
                                 </FormControl>
                                 <SelectContent>
-                                  {subjects.map((subj) => (
+                                  {(watched.section ? filteredSubjects : subjects).map((subj) => (
                                     <SelectItem key={subj.id} value={subj.id}>
                                       {subj.code} - {subj.name}
                                     </SelectItem>
@@ -840,10 +957,8 @@ const ScheduleForm: React.FC<ScheduleFormProps> = ({
                       </div>
                     </div>
 
-                    {/* Delivery & Room */}
                     <div className="space-y-4">
                       <div className="text-sm font-medium text-muted-foreground">Delivery &amp; Room</div>
-                      {/* 3 cols: type (1), room selectors (span 2) for alignment */}
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                         <FormField
                           control={form.control}
@@ -883,7 +998,6 @@ const ScheduleForm: React.FC<ScheduleFormProps> = ({
                       </div>
                     </div>
 
-                    {/* Schedule */}
                     <div className="space-y-4">
                       <div className="text-sm font-medium text-muted-foreground">Schedule</div>
                       <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
@@ -951,7 +1065,6 @@ const ScheduleForm: React.FC<ScheduleFormProps> = ({
                           )}
                         />
 
-                        {/* 👉 Suggestions right under time fields */}
                         {suggestions.length > 0 && (
                           <div className="md:col-span-12">
                             <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm">
@@ -992,7 +1105,6 @@ const ScheduleForm: React.FC<ScheduleFormProps> = ({
                       </div>
                     </div>
 
-                    {/* Assignment */}
                     <div className="space-y-4">
                       <div className="text-sm font-medium text-muted-foreground">Assignment</div>
                       <FormField
@@ -1001,14 +1113,17 @@ const ScheduleForm: React.FC<ScheduleFormProps> = ({
                         render={({ field }) => (
                           <FormItem className="max-w-xl">
                             <FormLabel>Professor</FormLabel>
-                            <Select onValueChange={field.onChange} defaultValue={field.value}>
+                            <Select onValueChange={field.onChange} value={field.value}>
                               <FormControl>
                                 <SelectTrigger>
-                                  {loading.professors ? <span>Loading professors...</span> : <SelectValue placeholder="Select a professor" />}
+                                  {loading.subjectProfessors
+                                    ? <span>Loading professors for subject...</span>
+                                    : <SelectValue placeholder={watched.subjectId ? "Select a professor" : "Pick a subject first"} />
+                                  }
                                 </SelectTrigger>
                               </FormControl>
                               <SelectContent>
-                                {professors.map((p) => (
+                                {(watched.subjectId ? filteredProfessors : professors).map((p) => (
                                   <SelectItem key={p.id} value={p.id}>
                                     {p.name}
                                     <Badge variant="secondary" className="ml-2">
@@ -1024,7 +1139,6 @@ const ScheduleForm: React.FC<ScheduleFormProps> = ({
                       />
                     </div>
 
-                    {/* Conflicts */}
                     {conflicts.length > 0 && (
                       <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm">
                         <div className="flex items-start gap-2">
@@ -1043,7 +1157,6 @@ const ScheduleForm: React.FC<ScheduleFormProps> = ({
                   </form>
                 </Form>
 
-                {/* Bottom actions */}
                 <div className="mt-6 flex flex-col sm:flex-row justify-end gap-2 border-t pt-4">
                   <Button
                     type="button"
@@ -1096,7 +1209,6 @@ const ScheduleForm: React.FC<ScheduleFormProps> = ({
             </Card>
           </div>
 
-          {/* RIGHT: read-only schedules sidebar */}
           <div className="lg:col-span-4">
             <Card className="sticky top-6">
               <CardHeader className="pb-3">
