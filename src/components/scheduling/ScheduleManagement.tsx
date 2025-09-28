@@ -14,12 +14,12 @@ import {
   RefreshCw,
   Eye,
   Trash2,
-  AlertTriangle,
-  CheckCircle,
   Grid3X3,
   List,
   X,
   Smartphone,
+  Pencil,
+  Wand2,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -54,12 +54,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "@/components/ui/use-toast";
 
-// Types
+type Origin = "auto" | "manual";
+
 interface Schedule {
   schedule_id: string;
   school_year: string;
@@ -76,12 +78,7 @@ interface Schedule {
   room_type: string | null;
   level: string;
   strand: string;
-  conflicts?: ConflictInfo[];
-}
-
-interface ConflictInfo {
-  type: "professor" | "room" | "section";
-  message: string;
+  origin: Origin;
 }
 
 interface Professor {
@@ -94,22 +91,33 @@ interface SimpleFilters {
   professor: string;
   level: string;
   strand: string;
-  status: string;
 }
 
 type ViewMode = "cards" | "table";
+type TabFilter = "all" | "auto" | "manual";
+
+const deriveOrigin = (raw: any): Origin => {
+  if (
+    raw?.is_auto_generated === true ||
+    raw?.auto_generated === true ||
+    raw?.generated_by === "auto" ||
+    raw?.created_by === "system" ||
+    raw?.origin === "auto"
+  ) {
+    return "auto";
+  }
+  return "manual";
+};
 
 const ScheduleManagement: React.FC = () => {
   const { settings } = useSystemSettings();
   const navigate = useNavigate();
 
-  // State
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [professors, setProfessors] = useState<Professor[]>([]);
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState<ViewMode>("cards");
 
-  // Dialog states (form state removed)
   const [selectedSchedule, setSelectedSchedule] = useState<Schedule | null>(null);
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
@@ -117,52 +125,37 @@ const ScheduleManagement: React.FC = () => {
   const [isSyncing, setIsSyncing] = useState(false);
 
   const [isAutoDialogOpen, setIsAutoDialogOpen] = useState(false);
-  const [isChecking, setIsChecking] = useState(false); // realtime/batch check indicator
+  const [isChecking, setIsChecking] = useState(false);
 
-  // Simple filters
   const [filters, setFilters] = useState<SimpleFilters>({
     search: "",
     professor: "all",
     level: "all",
     strand: "all",
-    status: "all",
   });
 
-  // Stats
+  const [tab, setTab] = useState<TabFilter>("all");
+
+  const [isEditProfOpen, setIsEditProfOpen] = useState(false);
+  const [scheduleToEdit, setScheduleToEdit] = useState<Schedule | null>(null);
+  const [selectedProfessorId, setSelectedProfessorId] = useState<string>("");
+
   const stats = useMemo(() => {
     const total = schedules.length;
-    const conflicts = schedules.filter(
-      (s) => s.conflicts && s.conflicts.length > 0
-    ).length;
-    const todaySchedules = schedules.filter((s) => {
-      const dayNames = [
-        "sunday",
-        "monday",
-        "tuesday",
-        "wednesday",
-        "thursday",
-        "friday",
-        "saturday",
-      ];
-      const todayName = dayNames[new Date().getDay()];
-      return s.days.some((day) => day.toLowerCase() === todayName);
-    }).length;
-
-    return { total, conflicts, today: todaySchedules };
+    const dayNames = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+    const todayName = dayNames[new Date().getDay()];
+    const todaySchedules = schedules.filter((s) => s.days.some((d) => d.toLowerCase() === todayName)).length;
+    const autoCount = schedules.filter((s) => s.origin === "auto").length;
+    const manualCount = schedules.filter((s) => s.origin === "manual").length;
+    return { total, today: todaySchedules, auto: autoCount, manual: manualCount };
   }, [schedules]);
 
-  // Sync to Firebase for mobile app
   const syncToMobile = async () => {
     setIsSyncing(true);
     try {
       const response = await apiService.syncToFirebase();
-
       if (response.success) {
-        toast({
-          title: "Sync Successful",
-          description: "Schedules have been synced to mobile app",
-          variant: "default",
-        });
+        toast({ title: "Sync Successful", description: "Schedules have been synced to mobile app" });
       } else {
         toast({
           title: "Sync Failed",
@@ -170,8 +163,7 @@ const ScheduleManagement: React.FC = () => {
           variant: "destructive",
         });
       }
-    } catch (error) {
-      console.error("Sync error:", error);
+    } catch {
       toast({
         title: "Sync Error",
         description: "An error occurred while syncing to mobile app",
@@ -182,54 +174,27 @@ const ScheduleManagement: React.FC = () => {
     }
   };
 
-  // Filtered schedules
   const filteredSchedules = useMemo(() => {
     return schedules.filter((schedule) => {
-      // Search filter
+      if (tab !== "all" && schedule.origin !== tab) return false;
       if (filters.search) {
-        const searchTerm = filters.search.toLowerCase();
-        const matchesSearch =
-          schedule.section_name.toLowerCase().includes(searchTerm) ||
-          schedule.subj_code.toLowerCase().includes(searchTerm) ||
-          schedule.subj_name.toLowerCase().includes(searchTerm) ||
-          schedule.professor_name.toLowerCase().includes(searchTerm);
-        if (!matchesSearch) return false;
+        const s = filters.search.toLowerCase();
+        const ok =
+          schedule.section_name.toLowerCase().includes(s) ||
+          schedule.subj_code.toLowerCase().includes(s) ||
+          schedule.subj_name.toLowerCase().includes(s) ||
+          schedule.professor_name.toLowerCase().includes(s);
+        if (!ok) return false;
       }
-
-      // Professor filter
       if (filters.professor !== "all") {
-        if (
-          !schedule.professor_name
-            .toLowerCase()
-            .includes(filters.professor.toLowerCase())
-        ) {
-          return false;
-        }
+        if (!schedule.professor_name.toLowerCase().includes(filters.professor.toLowerCase())) return false;
       }
-
-      // Level filter
-      if (filters.level !== "all" && schedule.level !== filters.level) {
-        return false;
-      }
-
-      // Strand filter
-      if (filters.strand !== "all" && schedule.strand !== filters.strand) {
-        return false;
-      }
-
-      // Status filter
-      if (filters.status !== "all") {
-        const hasConflicts =
-          schedule.conflicts && schedule.conflicts.length > 0;
-        if (filters.status === "conflict" && !hasConflicts) return false;
-        if (filters.status === "good" && hasConflicts) return false;
-      }
-
+      if (filters.level !== "all" && schedule.level !== filters.level) return false;
+      if (filters.strand !== "all" && schedule.strand !== filters.strand) return false;
       return true;
     });
-  }, [schedules, filters]);
+  }, [schedules, filters, tab]);
 
-  // Utility functions
   const formatTime = (time: string) => {
     if (!time) return "";
     const [hours, minutes] = time.split(":");
@@ -237,25 +202,14 @@ const ScheduleManagement: React.FC = () => {
     return `${hour % 12 || 12}:${minutes} ${hour >= 12 ? "PM" : "AM"}`;
   };
 
-  const getStatusBadge = (schedule: Schedule) => {
-    if (!schedule.conflicts || schedule.conflicts.length === 0) {
-      return (
-        <Badge className="bg-green-100 text-green-800 border-green-200">
-          <CheckCircle className="w-3 h-3 mr-1" />
-          Good
-        </Badge>
-      );
-    }
-
-    return (
-      <Badge className="bg-red-100 text-red-800 border-red-200">
-        <AlertTriangle className="w-3 h-3 mr-1" />
-        Conflict
-      </Badge>
+  const getOriginBadge = (origin: Origin) => {
+    return origin === "auto" ? (
+      <Badge className="bg-indigo-100 text-indigo-800 border-indigo-200">Auto</Badge>
+    ) : (
+      <Badge className="bg-amber-100 text-amber-800 border-amber-200">Manual</Badge>
     );
   };
 
-  // API functions
   const fetchSchedules = async () => {
     setLoading(true);
     try {
@@ -263,10 +217,9 @@ const ScheduleManagement: React.FC = () => {
         school_year: settings.schoolYear,
         semester: settings.semester,
       });
-
       if (response.success && Array.isArray(response.data)) {
-        const mappedSchedules = response.data.map((schedule: any) => ({
-          schedule_id: schedule.schedule_id.toString(),
+        const mapped = response.data.map((schedule: any) => ({
+          schedule_id: schedule.schedule_id?.toString?.() ?? String(schedule.schedule_id),
           school_year: schedule.school_year,
           semester: schedule.semester,
           subj_code: schedule.subj_code,
@@ -279,24 +232,24 @@ const ScheduleManagement: React.FC = () => {
           days: Array.isArray(schedule.days)
             ? schedule.days
             : typeof schedule.days === "string"
-            ? JSON.parse(schedule.days)
+            ? (() => {
+                try {
+                  return JSON.parse(schedule.days);
+                } catch {
+                  return [];
+                }
+              })()
             : [],
           room_number: schedule.room_number,
           room_type: schedule.room_type,
           level: schedule.level || "",
           strand: schedule.strand || "",
-          conflicts: [], // We'll check conflicts separately for performance
+          origin: deriveOrigin(schedule),
         }));
-
-        setSchedules(mappedSchedules);
+        setSchedules(mapped);
       }
-    } catch (error) {
-      console.error("Error fetching schedules:", error);
-      toast({
-        title: "Error",
-        description: "Failed to load schedules",
-        variant: "destructive",
-      });
+    } catch {
+      toast({ title: "Error", description: "Failed to load schedules", variant: "destructive" });
     } finally {
       setLoading(false);
     }
@@ -306,45 +259,46 @@ const ScheduleManagement: React.FC = () => {
     try {
       const response = await apiService.getProfessors();
       if (response.success && Array.isArray(response.data)) {
-        const mappedProfessors = response.data
-          .filter((prof: any) => prof && (prof.prof_id || prof.id))
-          .map((prof: any) => ({
-            id: (prof.prof_id || prof.id).toString(),
-            name: prof.prof_name || prof.name || "Unknown Professor",
+        const mapped = response.data
+          .filter((p: any) => p && (p.prof_id || p.id))
+          .map((p: any) => ({
+            id: (p.prof_id || p.id).toString(),
+            name: p.prof_name || p.name || "Unknown Professor",
           }));
-        setProfessors(mappedProfessors);
+        setProfessors(mapped);
       }
-    } catch (error) {
-      console.error("Error fetching professors:", error);
-    }
+    } catch {}
   };
 
   const runAutomation = async (payload: any) => {
     setIsChecking(true);
     try {
-      // 1) optional: check current conflicts before generation
-      await apiService.checkConflicts({
-        school_year: settings.schoolYear,
-        semester: settings.semester,
-      });
-
-      // 2) auto-generate (server returns proposed schedules + conflicts[] if any)
       const res = await apiService.autoGenerate({
         ...payload,
         school_year: settings.schoolYear,
         semester: settings.semester,
       });
-
       if (res.success) {
-        // server may persist and/or return the generated schedules
         await fetchSchedules();
-        toast({ title: "Automation complete", description: res.message || "Generated schedules successfully." });
+        toast({
+          title: "Automation complete",
+          description: res.message || "Generated schedules successfully.",
+        });
         setIsAutoDialogOpen(false);
+        setTab("auto");
       } else {
-        toast({ title: "Automation failed", description: res.message || "See server logs.", variant: "destructive" });
+        toast({
+          title: "Automation failed",
+          description: res.message || "See server logs.",
+          variant: "destructive",
+        });
       }
-    } catch (e:any) {
-      toast({ title: "Error", description: e?.message || "Automation error.", variant: "destructive" });
+    } catch (e: any) {
+      toast({
+        title: "Error",
+        description: e?.message || "Automation error.",
+        variant: "destructive",
+      });
     } finally {
       setIsChecking(false);
     }
@@ -352,32 +306,16 @@ const ScheduleManagement: React.FC = () => {
 
   const deleteSchedule = async () => {
     if (!scheduleToDelete) return;
-
     try {
-      const response = await apiService.deleteSchedule(
-        parseInt(scheduleToDelete)
-      );
+      const response = await apiService.deleteSchedule(parseInt(scheduleToDelete));
       if (response.success) {
-        setSchedules(
-          schedules.filter((s) => s.schedule_id !== scheduleToDelete)
-        );
-        toast({
-          title: "Success",
-          description: "Schedule deleted successfully",
-        });
+        setSchedules((prev) => prev.filter((s) => s.schedule_id !== scheduleToDelete));
+        toast({ title: "Success", description: "Schedule deleted successfully" });
       } else {
-        toast({
-          title: "Error",
-          description: "Failed to delete schedule",
-          variant: "destructive",
-        });
+        toast({ title: "Error", description: "Failed to delete schedule", variant: "destructive" });
       }
-    } catch (error) {
-      toast({
-        title: "Error",
-        description: "Failed to delete schedule",
-        variant: "destructive",
-      });
+    } catch {
+      toast({ title: "Error", description: "Failed to delete schedule", variant: "destructive" });
     } finally {
       setIsDeleteOpen(false);
       setScheduleToDelete(null);
@@ -385,27 +323,70 @@ const ScheduleManagement: React.FC = () => {
   };
 
   const clearFilters = () => {
-    setFilters({
-      search: "",
-      professor: "all",
-      level: "all",
-      strand: "all",
-      status: "all",
-    });
+    setFilters({ search: "", professor: "all", level: "all", strand: "all" });
   };
 
-  // Effects
   useEffect(() => {
     fetchSchedules();
     fetchProfessors();
   }, [settings.schoolYear, settings.semester]);
 
-  // Render schedule card
+  const openEditProfessor = (schedule: Schedule) => {
+    setScheduleToEdit(schedule);
+    const currentProf = professors.find((p) => p.name === schedule.professor_name);
+    setSelectedProfessorId(currentProf ? currentProf.id : "");
+    setIsEditProfOpen(true);
+  };
+
+  const applyProfessorChange = async () => {
+    if (!scheduleToEdit || !selectedProfessorId) {
+      toast({
+        title: "Missing selection",
+        description: "Please choose a professor.",
+        variant: "destructive",
+      });
+      return;
+    }
+    const newProf = professors.find((p) => p.id === selectedProfessorId);
+    if (!newProf) {
+      toast({
+        title: "Invalid professor",
+        description: "Please choose a valid professor.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      const sid = parseInt(scheduleToEdit.schedule_id);
+      const pid = parseInt(selectedProfessorId);
+      const res = await apiService.updateScheduleProfessor(sid, pid);
+
+      if (res?.success) {
+        setSchedules((prev) =>
+          prev.map((s) =>
+            s.schedule_id === scheduleToEdit.schedule_id ? { ...s, professor_name: newProf.name } : s
+          )
+        );
+        if (selectedSchedule && selectedSchedule.schedule_id === scheduleToEdit.schedule_id) {
+          setSelectedSchedule({ ...selectedSchedule, professor_name: newProf.name });
+        }
+        toast({ title: "Updated", description: "Professor updated for this schedule." });
+        setIsEditProfOpen(false);
+      } else {
+        toast({
+          title: "Update failed",
+          description: res?.message || "Server did not accept the change.",
+          variant: "destructive",
+        });
+      }
+    } catch (e: any) {
+      toast({ title: "Error", description: e?.message || "Could not update professor.", variant: "destructive" });
+    }
+  };
+
   const renderScheduleCard = (schedule: Schedule) => (
-    <Card
-      key={schedule.schedule_id}
-      className="hover:shadow-md transition-shadow"
-    >
+    <Card key={schedule.schedule_id} className="hover:shadow-md transition-shadow">
       <CardHeader className="pb-3">
         <div className="flex items-start justify-between">
           <div>
@@ -414,7 +395,9 @@ const ScheduleManagement: React.FC = () => {
               {schedule.level} - {schedule.strand}
             </p>
           </div>
-          {getStatusBadge(schedule)}
+          <div className="flex items-center gap-2">
+            {getOriginBadge(schedule.origin)}
+          </div>
         </div>
       </CardHeader>
 
@@ -423,9 +406,7 @@ const ScheduleManagement: React.FC = () => {
           <BookOpen className="h-4 w-4 text-muted-foreground" />
           <div>
             <p className="font-medium text-sm">{schedule.subj_code}</p>
-            <p className="text-xs text-muted-foreground">
-              {schedule.subj_name}
-            </p>
+            <p className="text-xs text-muted-foreground">{schedule.subj_name}</p>
           </div>
         </div>
 
@@ -471,6 +452,10 @@ const ScheduleManagement: React.FC = () => {
             <Eye className="h-3 w-3 mr-1" />
             View
           </Button>
+          <Button size="sm" variant="outline" onClick={() => openEditProfessor(schedule)}>
+            <Pencil className="h-3 w-3 mr-1" />
+            Change Professor
+          </Button>
           <Button
             size="sm"
             variant="destructive"
@@ -487,7 +472,6 @@ const ScheduleManagement: React.FC = () => {
     </Card>
   );
 
-  // Render schedule table
   const renderScheduleTable = () => (
     <div className="rounded-lg border bg-white">
       <Table>
@@ -499,7 +483,7 @@ const ScheduleManagement: React.FC = () => {
             <TableHead>Time</TableHead>
             <TableHead>Days</TableHead>
             <TableHead>Room</TableHead>
-            <TableHead>Status</TableHead>
+            <TableHead>Origin</TableHead>
             <TableHead>Actions</TableHead>
           </TableRow>
         </TableHeader>
@@ -517,15 +501,12 @@ const ScheduleManagement: React.FC = () => {
               <TableCell>
                 <div>
                   <p className="font-medium">{schedule.subj_code}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {schedule.subj_name}
-                  </p>
+                  <p className="text-xs text-muted-foreground">{schedule.subj_name}</p>
                 </div>
               </TableCell>
               <TableCell>{schedule.professor_name}</TableCell>
               <TableCell>
-                {formatTime(schedule.start_time)} -{" "}
-                {formatTime(schedule.end_time)}
+                {formatTime(schedule.start_time)} - {formatTime(schedule.end_time)}
               </TableCell>
               <TableCell>
                 <div className="flex gap-1">
@@ -542,7 +523,7 @@ const ScheduleManagement: React.FC = () => {
                 </div>
               </TableCell>
               <TableCell>{schedule.room_number || "No Room"}</TableCell>
-              <TableCell>{getStatusBadge(schedule)}</TableCell>
+              <TableCell>{getOriginBadge(schedule.origin)}</TableCell>
               <TableCell>
                 <div className="flex gap-1">
                   <Button
@@ -554,6 +535,9 @@ const ScheduleManagement: React.FC = () => {
                     }}
                   >
                     <Eye className="h-3 w-3" />
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => openEditProfessor(schedule)}>
+                    <Pencil className="h-3 w-3" />
                   </Button>
                   <Button
                     size="sm"
@@ -577,7 +561,6 @@ const ScheduleManagement: React.FC = () => {
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="container mx-auto py-6 px-4 space-y-6">
-        {/* Header */}
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div>
             <h1 className="text-2xl font-bold">Class Schedules</h1>
@@ -586,14 +569,8 @@ const ScheduleManagement: React.FC = () => {
             </p>
           </div>
           <div className="flex gap-2">
-            <Button
-              variant="outline"
-              onClick={fetchSchedules}
-              disabled={loading}
-            >
-              <RefreshCw
-                className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`}
-              />
+            <Button variant="outline" onClick={fetchSchedules} disabled={loading}>
+              <RefreshCw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} />
               Refresh
             </Button>
             <Button
@@ -602,9 +579,7 @@ const ScheduleManagement: React.FC = () => {
               disabled={isSyncing}
               className="bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100"
             >
-              <Smartphone
-                className={`mr-2 h-4 w-4 ${isSyncing ? "animate-pulse" : ""}`}
-              />
+              <Smartphone className={`mr-2 h-4 w-4 ${isSyncing ? "animate-pulse" : ""}`} />
               {isSyncing ? "Syncing..." : "Sync to Mobile"}
             </Button>
             <Button onClick={() => navigate("/scheduling/new")}>
@@ -612,20 +587,18 @@ const ScheduleManagement: React.FC = () => {
               Add Schedule
             </Button>
             <Button variant="outline" onClick={() => setIsAutoDialogOpen(true)}>
+              <Wand2 className="mr-2 h-4 w-4" />
               Auto-Generate
             </Button>
           </div>
         </div>
 
-        {/* Stats */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <Card>
             <CardContent className="p-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-muted-foreground">
-                    Total Schedules
-                  </p>
+                  <p className="text-sm text-muted-foreground">Total Schedules</p>
                   <p className="text-2xl font-bold">{stats.total}</p>
                 </div>
                 <Calendar className="h-8 w-8 text-blue-500" />
@@ -637,9 +610,7 @@ const ScheduleManagement: React.FC = () => {
             <CardContent className="p-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-muted-foreground">
-                    Today's Classes
-                  </p>
+                  <p className="text-sm text-muted-foreground">Today's Classes</p>
                   <p className="text-2xl font-bold">{stats.today}</p>
                 </div>
                 <Clock className="h-8 w-8 text-green-500" />
@@ -651,49 +622,39 @@ const ScheduleManagement: React.FC = () => {
             <CardContent className="p-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-muted-foreground">Conflicts</p>
-                  <p className="text-2xl font-bold text-red-600">
-                    {stats.conflicts}
+                  <p className="text-sm text-muted-foreground">Auto / Manual</p>
+                  <p className="text-2xl font-bold">
+                    {stats.auto} / {stats.manual}
                   </p>
                 </div>
-                <AlertTriangle className="h-8 w-8 text-red-500" />
+                <Wand2 className="h-8 w-8 text-indigo-500" />
               </div>
             </CardContent>
           </Card>
         </div>
 
-        {/* Filters */}
         <Card>
           <CardContent className="p-4">
             <div className="flex flex-col md:flex-row gap-4">
-              {/* Search */}
               <div className="flex-1">
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                   <Input
                     placeholder="Search schedules..."
                     value={filters.search}
-                    onChange={(e) =>
-                      setFilters((prev) => ({
-                        ...prev,
-                        search: e.target.value,
-                      }))
-                    }
+                    onChange={(e) => setFilters((prev) => ({ ...prev, search: e.target.value }))}
                     className="pl-10"
                   />
                 </div>
               </div>
 
-              {/* Quick Filters */}
               <div className="flex gap-2">
                 <Select
                   value={filters.professor}
-                  onValueChange={(value) =>
-                    setFilters((prev) => ({ ...prev, professor: value }))
-                  }
+                  onValueChange={(value) => setFilters((prev) => ({ ...prev, professor: value }))}
                 >
                   <SelectTrigger className="w-[140px]">
-                    <SelectValue />
+                    <SelectValue placeholder="Professors" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All Professors</SelectItem>
@@ -707,12 +668,10 @@ const ScheduleManagement: React.FC = () => {
 
                 <Select
                   value={filters.level}
-                  onValueChange={(value) =>
-                    setFilters((prev) => ({ ...prev, level: value }))
-                  }
+                  onValueChange={(value) => setFilters((prev) => ({ ...prev, level: value }))}
                 >
                   <SelectTrigger className="w-[100px]">
-                    <SelectValue />
+                    <SelectValue placeholder="Level" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All Levels</SelectItem>
@@ -723,12 +682,10 @@ const ScheduleManagement: React.FC = () => {
 
                 <Select
                   value={filters.strand}
-                  onValueChange={(value) =>
-                    setFilters((prev) => ({ ...prev, strand: value }))
-                  }
+                  onValueChange={(value) => setFilters((prev) => ({ ...prev, strand: value }))}
                 >
                   <SelectTrigger className="w-[100px]">
-                    <SelectValue />
+                    <SelectValue placeholder="Strand" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All Strands</SelectItem>
@@ -739,27 +696,10 @@ const ScheduleManagement: React.FC = () => {
                   </SelectContent>
                 </Select>
 
-                <Select
-                  value={filters.status}
-                  onValueChange={(value) =>
-                    setFilters((prev) => ({ ...prev, status: value }))
-                  }
-                >
-                  <SelectTrigger className="w-[100px]">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Status</SelectItem>
-                    <SelectItem value="good">Good</SelectItem>
-                    <SelectItem value="conflict">Conflict</SelectItem>
-                  </SelectContent>
-                </Select>
-
                 {(filters.search ||
                   filters.professor !== "all" ||
                   filters.level !== "all" ||
-                  filters.strand !== "all" ||
-                  filters.status !== "all") && (
+                  filters.strand !== "all") && (
                   <Button variant="outline" onClick={clearFilters}>
                     <X className="h-4 w-4" />
                   </Button>
@@ -767,13 +707,20 @@ const ScheduleManagement: React.FC = () => {
               </div>
             </div>
 
-            {/* View Toggle & Results */}
+            <div className="mt-4">
+              <Tabs value={tab} onValueChange={(v) => setTab(v as TabFilter)}>
+                <TabsList>
+                  <TabsTrigger value="all">All</TabsTrigger>
+                  <TabsTrigger value="auto">Auto-generated</TabsTrigger>
+                  <TabsTrigger value="manual">Manual</TabsTrigger>
+                </TabsList>
+              </Tabs>
+            </div>
+
             <div className="flex items-center justify-between mt-4">
               <p className="text-sm text-muted-foreground">
-                Showing {filteredSchedules.length} of {schedules.length}{" "}
-                schedules
+                Showing {filteredSchedules.length} of {schedules.length} schedules
               </p>
-
               <div className="flex gap-2">
                 <Button
                   size="sm"
@@ -794,7 +741,6 @@ const ScheduleManagement: React.FC = () => {
           </CardContent>
         </Card>
 
-        {/* Content */}
         {loading ? (
           <div className="flex items-center justify-center h-64">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
@@ -807,12 +753,18 @@ const ScheduleManagement: React.FC = () => {
               <p className="text-muted-foreground mb-4">
                 {schedules.length === 0
                   ? "Create your first schedule to get started."
-                  : "Try adjusting your filters to see more results."}
+                  : "Try adjusting your filters or switch tabs."}
               </p>
-              <Button onClick={() => navigate("/scheduling/new")}>
-                <Plus className="mr-2 h-4 w-4" />
-                Add Schedule
-              </Button>
+              <div className="flex justify-center gap-2">
+                <Button onClick={() => navigate("/scheduling/new")}>
+                  <Plus className="mr-2 h-4 w-4" />
+                  Add Schedule
+                </Button>
+                <Button variant="outline" onClick={() => setIsAutoDialogOpen(true)}>
+                  <Wand2 className="mr-2 h-4 w-4" />
+                  Auto-Generate
+                </Button>
+              </div>
             </CardContent>
           </Card>
         ) : viewMode === "cards" ? (
@@ -823,7 +775,6 @@ const ScheduleManagement: React.FC = () => {
           renderScheduleTable()
         )}
 
-        {/* Schedule Details Dialog */}
         <Dialog open={isDetailsOpen} onOpenChange={setIsDetailsOpen}>
           <DialogContent className="max-w-md">
             <DialogHeader>
@@ -832,25 +783,22 @@ const ScheduleManagement: React.FC = () => {
 
             {selectedSchedule && (
               <div className="space-y-4">
-                <div>
-                  <h3 className="font-semibold text-lg">
-                    {selectedSchedule.section_name}
-                  </h3>
-                  <p className="text-muted-foreground">
-                    {selectedSchedule.level} - {selectedSchedule.strand}
-                  </p>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="font-semibold text-lg">{selectedSchedule.section_name}</h3>
+                    <p className="text-muted-foreground">
+                      {selectedSchedule.level} - {selectedSchedule.strand}
+                    </p>
+                  </div>
+                  {getOriginBadge(selectedSchedule.origin)}
                 </div>
 
                 <div className="space-y-3">
                   <div className="flex items-center gap-2">
                     <BookOpen className="h-4 w-4 text-muted-foreground" />
                     <div>
-                      <p className="font-medium">
-                        {selectedSchedule.subj_code}
-                      </p>
-                      <p className="text-sm text-muted-foreground">
-                        {selectedSchedule.subj_name}
-                      </p>
+                      <p className="font-medium">{selectedSchedule.subj_code}</p>
+                      <p className="text-sm text-muted-foreground">{selectedSchedule.subj_name}</p>
                     </div>
                   </div>
 
@@ -862,8 +810,7 @@ const ScheduleManagement: React.FC = () => {
                   <div className="flex items-center gap-2">
                     <Clock className="h-4 w-4 text-muted-foreground" />
                     <p>
-                      {formatTime(selectedSchedule.start_time)} -{" "}
-                      {formatTime(selectedSchedule.end_time)}
+                      {formatTime(selectedSchedule.start_time)} - {formatTime(selectedSchedule.end_time)}
                     </p>
                   </div>
 
@@ -884,16 +831,17 @@ const ScheduleManagement: React.FC = () => {
                       <p>{selectedSchedule.room_number}</p>
                     </div>
                   )}
-
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium">Status:</span>
-                    {getStatusBadge(selectedSchedule)}
-                  </div>
                 </div>
               </div>
             )}
 
-            <DialogFooter>
+            <DialogFooter className="gap-2">
+              {selectedSchedule && (
+                <Button variant="outline" onClick={() => openEditProfessor(selectedSchedule)}>
+                  <Pencil className="h-4 w-4 mr-2" />
+                  Change Professor
+                </Button>
+              )}
               <Button variant="outline" onClick={() => setIsDetailsOpen(false)}>
                 Close
               </Button>
@@ -901,22 +849,17 @@ const ScheduleManagement: React.FC = () => {
           </DialogContent>
         </Dialog>
 
-        {/* Delete Confirmation */}
         <AlertDialog open={isDeleteOpen} onOpenChange={setIsDeleteOpen}>
           <AlertDialogContent>
             <AlertDialogHeader>
               <AlertDialogTitle>Delete Schedule</AlertDialogTitle>
               <AlertDialogDescription>
-                Are you sure you want to delete this schedule? This action
-                cannot be undone.
+                Are you sure you want to delete this schedule? This action cannot be undone.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction
-                onClick={deleteSchedule}
-                className="bg-red-600 hover:bg-red-700"
-              >
+              <AlertDialogAction onClick={deleteSchedule} className="bg-red-600 hover:bg-red-700">
                 Delete
               </AlertDialogAction>
             </AlertDialogFooter>
@@ -928,7 +871,47 @@ const ScheduleManagement: React.FC = () => {
           onOpenChange={setIsAutoDialogOpen}
           onRun={runAutomation}
           defaults={{ school_year: settings.schoolYear, semester: settings.semester }}
+          loading={isChecking}
         />
+
+        <Dialog open={isEditProfOpen} onOpenChange={setIsEditProfOpen}>
+          <DialogContent className="max-w-sm">
+            <DialogHeader>
+              <DialogTitle>Change Professor</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-3">
+              <div className="text-sm">
+                {scheduleToEdit ? (
+                  <>
+                    <div className="mb-1 font-medium">{scheduleToEdit.section_name}</div>
+                    <div className="text-muted-foreground">
+                      {scheduleToEdit.subj_code} — {scheduleToEdit.subj_name}
+                    </div>
+                  </>
+                ) : null}
+              </div>
+
+              <Select value={selectedProfessorId} onValueChange={(v) => setSelectedProfessorId(v)}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select professor" />
+                </SelectTrigger>
+                <SelectContent>
+                  {professors.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setIsEditProfOpen(false)}>
+                Cancel
+              </Button>
+              <Button onClick={applyProfessorChange}>Save</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </div>
   );
