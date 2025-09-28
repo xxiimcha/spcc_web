@@ -12,7 +12,6 @@ import {
   Plus,
   Search,
   RefreshCw,
-  Eye,
   Trash2,
   Grid3X3,
   List,
@@ -20,6 +19,8 @@ import {
   Smartphone,
   Pencil,
   Wand2,
+  ClipboardCheck,
+  MoreVertical,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -59,6 +60,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "@/components/ui/use-toast";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 type Origin = "auto" | "manual";
 
@@ -79,6 +88,7 @@ interface Schedule {
   level: string;
   strand: string;
   origin: Origin;
+  status?: string;
 }
 
 interface Professor {
@@ -210,6 +220,9 @@ const ScheduleManagement: React.FC = () => {
     );
   };
 
+  const isReviewable = (s: Schedule) => s.origin === "auto" && s.status?.toLowerCase?.() === "pending";
+  const goToReview = (id: string) => navigate(`/scheduling/review/${id}`);
+
   const fetchSchedules = async () => {
     setLoading(true);
     try {
@@ -245,6 +258,7 @@ const ScheduleManagement: React.FC = () => {
           level: schedule.level || "",
           strand: schedule.strand || "",
           origin: deriveOrigin(schedule),
+          status: (schedule.status || schedule.review_status || "").toString().toLowerCase(),
         }));
         setSchedules(mapped);
       }
@@ -385,9 +399,75 @@ const ScheduleManagement: React.FC = () => {
     }
   };
 
+  const CardActionsMenu: React.FC<{ s: Schedule }> = ({ s }) => (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        asChild
+        onClick={(e) => e.stopPropagation()}
+        onPointerDown={(e) => e.stopPropagation()}
+      >
+        <Button size="icon" variant="ghost" className="h-8 w-8">
+          <MoreVertical className="h-4 w-4" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="end"
+        onClick={(e) => e.stopPropagation()}
+        onPointerDown={(e) => e.stopPropagation()}
+      >
+        <DropdownMenuLabel>Actions</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          onClick={(e) => {
+            e.stopPropagation();
+            openEditProfessor(s);
+          }}
+        >
+          <Pencil className="mr-2 h-4 w-4" />
+          Change Professor
+        </DropdownMenuItem>
+        {isReviewable(s) && (
+          <DropdownMenuItem
+            onClick={(e) => {
+              e.stopPropagation();
+              goToReview(s.schedule_id);
+            }}
+          >
+            <ClipboardCheck className="mr-2 h-4 w-4" />
+            Review
+          </DropdownMenuItem>
+        )}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          className="text-red-600 focus:text-red-600"
+          onClick={(e) => {
+            e.stopPropagation();
+            setScheduleToDelete(s.schedule_id);
+            setIsDeleteOpen(true);
+          }}
+        >
+          <Trash2 className="mr-2 h-4 w-4" />
+          Delete
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+
   const renderScheduleCard = (schedule: Schedule) => (
-    <Card key={schedule.schedule_id} className="hover:shadow-md transition-shadow">
-      <CardHeader className="pb-3">
+    <Card
+      key={schedule.schedule_id}
+      className="hover:shadow-md transition-shadow relative cursor-pointer"
+      onClick={() => {
+        setSelectedSchedule(schedule);
+        setIsDetailsOpen(true);
+      }}
+      role="button"
+    >
+      <div className="absolute top-2 right-2">
+        <CardActionsMenu s={schedule} />
+      </div>
+
+      <CardHeader className="pb-3 pr-12">
         <div className="flex items-start justify-between">
           <div>
             <CardTitle className="text-lg">{schedule.section_name}</CardTitle>
@@ -395,13 +475,11 @@ const ScheduleManagement: React.FC = () => {
               {schedule.level} - {schedule.strand}
             </p>
           </div>
-          <div className="flex items-center gap-2">
-            {getOriginBadge(schedule.origin)}
-          </div>
+          <div className="flex items-center gap-2">{getOriginBadge(schedule.origin)}</div>
         </div>
       </CardHeader>
 
-      <CardContent className="space-y-3">
+      <CardContent className="space-y-3 pr-12">
         <div className="flex items-center gap-2">
           <BookOpen className="h-4 w-4 text-muted-foreground" />
           <div>
@@ -439,35 +517,6 @@ const ScheduleManagement: React.FC = () => {
             <p className="text-sm">{schedule.room_number}</p>
           </div>
         )}
-
-        <div className="flex gap-2 pt-2">
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => {
-              setSelectedSchedule(schedule);
-              setIsDetailsOpen(true);
-            }}
-          >
-            <Eye className="h-3 w-3 mr-1" />
-            View
-          </Button>
-          <Button size="sm" variant="outline" onClick={() => openEditProfessor(schedule)}>
-            <Pencil className="h-3 w-3 mr-1" />
-            Change Professor
-          </Button>
-          <Button
-            size="sm"
-            variant="destructive"
-            onClick={() => {
-              setScheduleToDelete(schedule.schedule_id);
-              setIsDeleteOpen(true);
-            }}
-          >
-            <Trash2 className="h-3 w-3 mr-1" />
-            Delete
-          </Button>
-        </div>
       </CardContent>
     </Card>
   );
@@ -484,12 +533,19 @@ const ScheduleManagement: React.FC = () => {
             <TableHead>Days</TableHead>
             <TableHead>Room</TableHead>
             <TableHead>Origin</TableHead>
-            <TableHead>Actions</TableHead>
+            <TableHead className="w-[60px] text-right pr-6"> </TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {filteredSchedules.map((schedule) => (
-            <TableRow key={schedule.schedule_id}>
+            <TableRow
+              key={schedule.schedule_id}
+              className="cursor-pointer"
+              onClick={() => {
+                setSelectedSchedule(schedule);
+                setIsDetailsOpen(true);
+              }}
+            >
               <TableCell>
                 <div>
                   <p className="font-medium">{schedule.section_name}</p>
@@ -524,32 +580,8 @@ const ScheduleManagement: React.FC = () => {
               </TableCell>
               <TableCell>{schedule.room_number || "No Room"}</TableCell>
               <TableCell>{getOriginBadge(schedule.origin)}</TableCell>
-              <TableCell>
-                <div className="flex gap-1">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => {
-                      setSelectedSchedule(schedule);
-                      setIsDetailsOpen(true);
-                    }}
-                  >
-                    <Eye className="h-3 w-3" />
-                  </Button>
-                  <Button size="sm" variant="outline" onClick={() => openEditProfessor(schedule)}>
-                    <Pencil className="h-3 w-3" />
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="destructive"
-                    onClick={() => {
-                      setScheduleToDelete(schedule.schedule_id);
-                      setIsDeleteOpen(true);
-                    }}
-                  >
-                    <Trash2 className="h-3 w-3" />
-                  </Button>
-                </div>
+              <TableCell className="text-right pr-2" onClick={(e) => e.stopPropagation()}>
+                <CardActionsMenu s={schedule} />
               </TableCell>
             </TableRow>
           ))}
@@ -638,7 +670,7 @@ const ScheduleManagement: React.FC = () => {
             <div className="flex flex-col md:flex-row gap-4">
               <div className="flex-1">
                 <div className="relative">
-                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                   <Input
                     placeholder="Search schedules..."
                     value={filters.search}
@@ -836,6 +868,12 @@ const ScheduleManagement: React.FC = () => {
             )}
 
             <DialogFooter className="gap-2">
+              {selectedSchedule && isReviewable(selectedSchedule) && (
+                <Button onClick={() => goToReview(selectedSchedule.schedule_id)}>
+                  <ClipboardCheck className="h-4 w-4 mr-2" />
+                  Review
+                </Button>
+              )}
               {selectedSchedule && (
                 <Button variant="outline" onClick={() => openEditProfessor(selectedSchedule)}>
                   <Pencil className="h-4 w-4 mr-2" />
