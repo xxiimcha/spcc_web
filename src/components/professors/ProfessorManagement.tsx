@@ -190,17 +190,15 @@ const ProfessorManagement = () => {
 
   const fetchProfessorSubjects = async (professorId: string) => {
     try {
-      const response = await fetch(
-        `http://localhost/spcc_database/get_list_of_subjects.php?professor_id=${professorId}`
-      );
-      const data = await response.json();
-      if (data?.status === "success" && data.subjects) {
+      const res = await fetch(`http://localhost/spcc_database/professors.php?id=${professorId}`);
+      const json = await res.json();
+      if (json?.status === "success" && json?.data?.subjects) {
         setSelectedProfessor((prev) =>
           prev && prev.id === professorId
             ? {
                 ...prev,
-                subjects: data.subjects.map((s: any) => ({
-                  id: s.subj_id,
+                subjects: json.data.subjects.map((s: any) => ({
+                  id: String(s.subj_id),
                   subj_name: s.subj_name,
                   subj_code: s.subj_code,
                 })),
@@ -219,6 +217,7 @@ const ProfessorManagement = () => {
       setSelectedProfessor((prev) => (prev && prev.id === professorId ? { ...prev, subjects: [] } : prev));
     }
   };
+
 
   const filteredProfessors = professors.filter(
     (prof) =>

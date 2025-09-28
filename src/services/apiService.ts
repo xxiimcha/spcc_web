@@ -54,6 +54,36 @@ export interface Professor {
   prof_contact?: string;
 }
 
+export interface ProfessorCreatePayload {
+  name: string;
+  username: string;
+  password: string;
+  email?: string;
+  phone?: string;
+  qualifications: string[];
+  subject_ids: number[];
+}
+
+export interface ProfessorUpdatePayload {
+  name: string;
+  email?: string;
+  phone?: string;
+  qualifications: string[];
+  subject_ids: number[];
+}
+
+export interface ProfessorRow {
+  prof_id: number;
+  prof_name: string;
+  prof_username?: string;
+  prof_password?: string;
+  prof_email?: string;
+  prof_phone?: string;
+  prof_qualifications?: string | string[];
+  prof_subject_ids?: string | number[];
+  subj_count?: number;
+}
+
 export interface Room {
   room_id: number;
   room_number: string;
@@ -103,6 +133,19 @@ export interface AutoGenResult {
   inserted: number;
   skipped: number;
   details?: any;
+}
+
+function coerceArray<T = any>(v: any): T[] {
+  if (Array.isArray(v)) return v as T[];
+  if (typeof v === "string") {
+    try {
+      const parsed = JSON.parse(v);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
 }
 
 class ApiService {
@@ -155,17 +198,27 @@ class ApiService {
     return this.makeRequest("DELETE", `/subjects.php?id=${id}`);
   }
 
-  async getProfessors(): Promise<ApiResponse<Professor[]>> {
-    const response = await this.makeRequest<any>("GET", "/professors.php");
-    return { ...response, data: response.data?.professors || response.data?.data || response.data || [] };
+  async getProfessors(): Promise<ApiResponse<(ProfessorRow & { qualifications: string[]; subjects: number[] })[]>> {
+    const base = await this.makeRequest<any>("GET", "/professors.php");
+    const rows: ProfessorRow[] = base.data?.professors || base.data?.data || base.data || [];
+    const mapped = rows.map((r) => ({
+      ...r,
+      qualifications: coerceArray<string>(r.prof_qualifications),
+      subjects: coerceArray<number>(r.prof_subject_ids),
+    }));
+    return { ...base, data: mapped };
   }
 
-  async createProfessor(professor: Omit<Professor, "prof_id">): Promise<ApiResponse<Professor>> {
-    return this.makeRequest<Professor>("POST", "/professors.php", professor);
+  async getProfessor(id: number): Promise<ApiResponse<ProfessorRow>> {
+    return this.makeRequest<ProfessorRow>("GET", `/professors.php?id=${id}`);
   }
 
-  async updateProfessor(id: number, professor: Partial<Professor>): Promise<ApiResponse<Professor>> {
-    return this.makeRequest<Professor>("PUT", `/professors.php?id=${id}`, professor);
+  async createProfessorWithSubjects(payload: ProfessorCreatePayload): Promise<ApiResponse> {
+    return this.makeRequest("POST", "/professors.php", payload);
+  }
+
+  async updateProfessorWithSubjects(id: number, payload: ProfessorUpdatePayload): Promise<ApiResponse> {
+    return this.makeRequest("PUT", `/professors.php?id=${id}`, payload);
   }
 
   async deleteProfessor(id: number): Promise<ApiResponse> {
