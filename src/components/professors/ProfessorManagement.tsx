@@ -10,9 +10,10 @@ import {
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
+  FileSpreadsheet,
+  FileText,
 } from "lucide-react";
 import { apiService } from "@/services/apiService";
-
 import {
   Table,
   TableBody,
@@ -28,6 +29,9 @@ import { useToast } from "@/components/ui/use-toast";
 import ProfessorForm from "./ProfessorForm";
 import CredentialsViewer from "./CredentialsViewer";
 import SuccessMessage from "../popupmsg/SuccessMessage";
+import * as XLSX from "xlsx";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 
 interface Professor {
   id: string;
@@ -53,8 +57,6 @@ const ProfessorManagement = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
-
-  // dialogs
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
@@ -63,8 +65,6 @@ const ProfessorManagement = () => {
   const [selectedProfessor, setSelectedProfessor] = useState<Professor | null>(null);
   const [isSuccessDialogOpen, setIsSuccessDialogOpen] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
-
-  // pagination (client-side)
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState<number>(PAGE_SIZES[0]);
 
@@ -149,7 +149,7 @@ const ProfessorManagement = () => {
       const result = await response.json();
       if (result.status === "error") throw new Error(result.message || "Failed to update professor");
 
-      setProfessors((prev) => prev.map((p) => (p.id === id ? { ...professorData, id } as Professor : p)));
+      setProfessors((prev) => prev.map((p) => (p.id === id ? ({ ...professorData, id } as Professor) : p)));
       setIsEditDialogOpen(false);
       setSuccessMessage(`Professor ${professorData.name} updated successfully!`);
       setIsSuccessDialogOpen(true);
@@ -226,12 +226,10 @@ const ProfessorManagement = () => {
       prof.email?.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  // reset to page 1 when search or page size changes
   useEffect(() => {
     setCurrentPage(1);
   }, [searchQuery, pageSize]);
 
-  // pagination math (client-side)
   const totalItems = filteredProfessors.length;
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
   const pageStartIndex = (currentPage - 1) * pageSize;
@@ -275,6 +273,108 @@ const ProfessorManagement = () => {
     return `${subjectCount} subjects`;
   };
 
+  const getSubjectsForProfessor = async (professorId: string) => {
+    try {
+      const res = await fetch(
+        `http://localhost/spcc_database/get_list_of_subjects.php?professor_id=${professorId}`
+      );
+      const data = await res.json();
+      if (data?.status === "success" && Array.isArray(data.subjects)) {
+        return data.subjects.map((s: any) => ({
+          id: s.subj_id?.toString?.() ?? String(s.subj_id ?? ""),
+          subj_name: s.subj_name ?? "",
+          subj_code: s.subj_code ?? "",
+        }));
+      }
+    } catch (_) {}
+    return [];
+  };
+
+  const ensureSubjectsFor = async (list: Professor[]) => {
+    const enriched = await Promise.all(
+      list.map(async (p) => {
+        if (Array.isArray(p.subjects)) return p;
+        const subjects = await getSubjectsForProfessor(p.id);
+        return { ...p, subjects };
+      })
+    );
+    return enriched;
+  };
+
+  const toFlatRows = (list: Professor[]) => {
+    const rows: Array<[string, string, string, string]> = [];
+    list.forEach((p) => {
+      const email = p.email || "N/A";
+      if (!p.subjects || p.subjects.length === 0) {
+        rows.push([p.name, email, "—", "No subjects"]);
+      } else {
+        p.subjects.forEach((s) => {
+          rows.push([p.name, email, s.subj_code || "N/A", s.subj_name || ""]);
+        });
+      }
+    });
+    return rows;
+  };
+
+  const exportToExcel = async () => {
+    try {
+      const list = await ensureSubjectsFor(filteredProfessors);
+      const rows = toFlatRows(list);
+      const header = ["Professor", "Email", "Subject Code", "Subject Name"];
+      const ws = XLSX.utils.aoa_to_sheet([header, ...rows]);
+      ws["!cols"] = [{ wch: 28 }, { wch: 28 }, { wch: 16 }, { wch: 48 }];
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Professors-Subjects");
+      const date = new Date();
+      const stamp = date.toISOString().slice(0, 19).replace(/[:T]/g, "-");
+      XLSX.writeFile(wb, `professors-subjects_${stamp}.xlsx`);
+    } catch (err) {
+      toast({
+        variant: "destructive",
+        title: "Export failed",
+        description: err instanceof Error ? err.message : "Could not export to Excel.",
+      });
+    }
+  };
+
+  const exportToPDF = async () => {
+    try {
+      const list = await ensureSubjectsFor(filteredProfessors);
+      const rows = toFlatRows(list);
+      const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
+      const title = "Professors and Assigned Subjects";
+      doc.setFontSize(14);
+      doc.text(title, 40, 40);
+      autoTable(doc, {
+        startY: 60,
+        head: [["Professor", "Email", "Subject Code", "Subject Name"]],
+        body: rows,
+        styles: { fontSize: 9, cellPadding: 6 },
+        headStyles: { fillColor: undefined },
+        columnStyles: { 0: { cellWidth: 180 }, 1: { cellWidth: 200 }, 2: { cellWidth: 120 }, 3: { cellWidth: "auto" } },
+        didDrawPage: () => {
+          const page = (doc as any).getCurrentPageInfo?.().pageNumber ?? 1;
+          const pages = (doc as any).internal.getNumberOfPages?.() || 1;
+          doc.setFontSize(9);
+          doc.text(
+            `Page ${page} of ${pages}`,
+            doc.internal.pageSize.getWidth() - 80,
+            doc.internal.pageSize.getHeight() - 20
+          );
+        },
+      });
+      const date = new Date();
+      const stamp = date.toISOString().slice(0, 19).replace(/[:T]/g, "-");
+      doc.save(`professors-subjects_${stamp}.pdf`);
+    } catch (err) {
+      toast({
+        variant: "destructive",
+        title: "Export failed",
+        description: err instanceof Error ? err.message : "Could not export to PDF.",
+      });
+    }
+  };
+
   if (loading) {
     return (
       <div className="w-full p-6 bg-white rounded-lg shadow-sm flex justify-center">
@@ -301,9 +401,17 @@ const ProfessorManagement = () => {
     <div className="w-full p-6 bg-white rounded-lg shadow-sm">
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between mb-6">
         <h2 className="text-2xl font-bold">Professor Management</h2>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
           <Button variant="outline" onClick={() => setIsCredentialsDialogOpen(true)} className="flex items-center gap-2">
             <KeyRound className="h-4 w-4" /> View Credentials
+          </Button>
+          <Button variant="outline" onClick={exportToExcel} className="flex items-center gap-2">
+            <FileSpreadsheet className="h-4 w-4" />
+            Export Excel
+          </Button>
+          <Button variant="outline" onClick={exportToPDF} className="flex items-center gap-2">
+            <FileText className="h-4 w-4" />
+            Export PDF
           </Button>
           <Button onClick={() => setIsAddDialogOpen(true)}>
             <Plus className="mr-2 h-4 w-4" /> Add Professor
@@ -322,7 +430,6 @@ const ProfessorManagement = () => {
           />
         </div>
 
-        {/* Page size selector */}
         <div className="flex items-center gap-2">
           <span className="text-sm text-muted-foreground">Rows per page</span>
           <select
@@ -416,18 +523,12 @@ const ProfessorManagement = () => {
         </Table>
       </div>
 
-      {/* Pagination footer */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mt-4">
         <div className="text-sm text-muted-foreground">
-          Showing{" "}
-          <span className="font-medium">{totalItems === 0 ? 0 : pageStartIndex + 1}</span>–
-          <span className="font-medium">{pageEndIndex}</span> of{" "}
-          <span className="font-medium">{totalItems}</span> professors
+          Showing <span className="font-medium">{totalItems === 0 ? 0 : pageStartIndex + 1}</span>–
+          <span className="font-medium">{pageEndIndex}</span> of <span className="font-medium">{totalItems}</span> professors
           {searchQuery ? (
-            <span>
-              {" "}
-              (filtered from <span className="font-medium">{professors.length}</span>)
-            </span>
+            <span> (filtered from <span className="font-medium">{professors.length}</span>)</span>
           ) : null}
         </div>
 
@@ -438,12 +539,9 @@ const ProfessorManagement = () => {
           <Button variant="outline" size="icon" onClick={gotoPrev} disabled={currentPage === 1}>
             <ChevronLeft className="h-4 w-4" />
           </Button>
-
           <span className="text-sm px-2">
-            Page <span className="font-medium">{currentPage}</span> of{" "}
-            <span className="font-medium">{totalPages}</span>
+            Page <span className="font-medium">{currentPage}</span> of <span className="font-medium">{totalPages}</span>
           </span>
-
           <Button
             variant="outline"
             size="icon"
@@ -463,12 +561,10 @@ const ProfessorManagement = () => {
         </div>
       </div>
 
-      {/* Add Professor Dialog */}
       {isAddDialogOpen && (
         <ProfessorForm open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen} onSubmit={addProfessor} />
       )}
 
-      {/* Edit Professor Dialog */}
       {isEditDialogOpen && selectedProfessor && (
         <ProfessorForm
           open={isEditDialogOpen}
@@ -483,7 +579,6 @@ const ProfessorManagement = () => {
         />
       )}
 
-      {/* View Professor Dialog */}
       {isViewDialogOpen && selectedProfessor && (
         <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>
           <DialogContent className="sm:max-w-[600px] bg-white">
@@ -561,7 +656,6 @@ const ProfessorManagement = () => {
         </Dialog>
       )}
 
-      {/* Delete Confirmation Dialog */}
       {isDeleteDialogOpen && selectedProfessor && (
         <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
           <DialogContent className="sm:max-w-[425px] bg-white">
@@ -570,8 +664,7 @@ const ProfessorManagement = () => {
             </DialogHeader>
             <div className="py-4">
               <p className="text-base">
-                Are you sure you want to delete professor{" "}
-                <span className="font-semibold">{selectedProfessor.name}</span>?
+                Are you sure you want to delete professor <span className="font-semibold">{selectedProfessor.name}</span>?
               </p>
               <p className="text-sm text-muted-foreground mt-2">This action cannot be undone.</p>
             </div>
