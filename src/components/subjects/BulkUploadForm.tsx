@@ -33,6 +33,78 @@ const ACCEPT =
 
 const MAX_PREVIEW_ROWS = 10;
 
+// Canonical column keys we expect in the UPDATED template
+const CANONICAL_ORDER = [
+  "code",
+  "name",
+  "subject type",
+  "description",
+  "grade level",
+  "strand",
+  "semester",
+] as const;
+type CanonicalKey = (typeof CANONICAL_ORDER)[number];
+
+// Map common header variations -> canonical keys
+const HEADER_ALIASES: Record<string, CanonicalKey> = {
+  code: "code",
+  "subject code": "code",
+  "subj code": "code",
+
+  name: "name",
+  "subject name": "name",
+  title: "name",
+
+  "subject type": "subject type",
+  type: "subject type",
+  "subj type": "subject type",
+
+  description: "description",
+  desc: "description",
+
+  "grade level": "grade level",
+  grade_level: "grade level",
+  "year level": "grade level",
+  year_level: "grade level",
+  grade: "grade level",
+
+  strand: "strand",
+  "track/strand": "strand",
+
+  semester: "semester",
+  sem: "semester",
+};
+
+const REQUIRED_KEYS: CanonicalKey[] = [
+  "code",
+  "name",
+  "subject type",
+  "grade level",
+  "strand",
+  "semester",
+];
+// description is optional but supported
+
+// Use min-widths so long values don't crush columns; allow horizontal scroll
+const widthByCol = (key: string) => {
+  const k = key.toLowerCase();
+  if (k === "code") return "min-w-[120px]";
+  if (k === "name") return "min-w-[280px]";
+  if (k === "description") return "min-w-[380px]";
+  if (k === "subject type") return "min-w-[160px]";
+  if (k === "grade level") return "min-w-[140px]";
+  if (k === "strand") return "min-w-[120px]";
+  if (k === "semester") return "min-w-[160px]";
+  return "min-w-[200px]";
+};
+
+const normalize = (s: unknown) =>
+  String(s ?? "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/[_\-]+/g, " ")
+    .trim();
+
 const BulkUploadForm: React.FC<Props> = ({
   open,
   onOpenChange,
@@ -44,7 +116,7 @@ const BulkUploadForm: React.FC<Props> = ({
   const [file, setFile] = useState<File | null>(null);
   const [error, setError] = useState("");
   const [sheetName, setSheetName] = useState<string>("");
-  const [columns, setColumns] = useState<string[]>([]);
+  const [displayColumns, setDisplayColumns] = useState<string[]>([]);
   const [rows, setRows] = useState<any[]>([]);
   const [totalRows, setTotalRows] = useState<number>(0);
 
@@ -58,7 +130,7 @@ const BulkUploadForm: React.FC<Props> = ({
     setFile(null);
     setError("");
     setSheetName("");
-    setColumns([]);
+    setDisplayColumns([]);
     setRows([]);
     setTotalRows(0);
     stopAnimation(true);
@@ -86,7 +158,7 @@ const BulkUploadForm: React.FC<Props> = ({
       if (!ws) {
         setError("No worksheet found in the file.");
         setSheetName("");
-        setColumns([]);
+        setDisplayColumns([]);
         setRows([]);
         setTotalRows(0);
         return;
@@ -96,21 +168,62 @@ const BulkUploadForm: React.FC<Props> = ({
 
       setTotalRows(json.length);
       if (json.length === 0) {
-        setColumns([]);
+        setDisplayColumns([]);
         setRows([]);
         return;
       }
 
-      const cols = Object.keys(json[0]);
-      setColumns(cols);
-      setRows(json.slice(0, MAX_PREVIEW_ROWS));
+      const firstObj = json[0] as Record<string, any>;
+      const rawHeaders = Object.keys(firstObj);
 
-      // configure animation duration based on row count (1s..8s)
-      const est = Math.min(8000, Math.max(1000, json.length * 60)); // ~60ms per row
+      const toCanonical: Record<string, CanonicalKey | undefined> = {};
+      for (const h of rawHeaders) {
+        const norm = normalize(h);
+        toCanonical[h] = HEADER_ALIASES[norm] ?? (CANONICAL_ORDER as readonly string[]).includes(norm)
+          ? (norm as CanonicalKey)
+          : undefined;
+      }
+
+      const presentCanon = new Set(
+        rawHeaders.map((h) => toCanonical[h]).filter(Boolean) as CanonicalKey[]
+      );
+      const missing = REQUIRED_KEYS.filter((k) => !presentCanon.has(k));
+      if (missing.length) {
+        setError(
+          `Missing required column${missing.length > 1 ? "s" : ""}: ${missing.join(
+            ", "
+          )}. Please update your Excel headers to match the template.`
+        );
+        setDisplayColumns([]);
+        setRows([]);
+        return;
+      }
+
+      const desiredOrder: string[] = CANONICAL_ORDER.filter((k) => presentCanon.has(k));
+      if (!desiredOrder.includes("description") && presentCanon.has("description")) {
+        desiredOrder.splice(2, 0, "description");
+      }
+
+      const normalizedRows = json.map((row) => {
+        const out: Record<string, any> = {};
+        for (const origKey of Object.keys(row)) {
+          const canon = toCanonical[origKey];
+          if (canon) out[canon] = row[origKey] ?? "";
+        }
+        for (const key of CANONICAL_ORDER) {
+          if (!(key in out)) out[key] = "";
+        }
+        return out;
+      });
+
+      setDisplayColumns(desiredOrder);
+      setRows(normalizedRows.slice(0, MAX_PREVIEW_ROWS));
+
+      const est = Math.min(8000, Math.max(1000, json.length * 60));
       durationRef.current = est;
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to read the Excel file.");
-      setColumns([]);
+      setDisplayColumns([]);
       setRows([]);
       setTotalRows(0);
     }
@@ -120,7 +233,7 @@ const BulkUploadForm: React.FC<Props> = ({
     setError("");
     const f = e.target.files?.[0] ?? null;
     setFile(f ?? null);
-    setColumns([]);
+    setDisplayColumns([]);
     setRows([]);
     setSheetName("");
     setTotalRows(0);
@@ -136,7 +249,6 @@ const BulkUploadForm: React.FC<Props> = ({
     if (startRef.current == null) startRef.current = t;
     const elapsed = t - startRef.current;
     const dur = durationRef.current;
-    // Cap at 99% until parent signals done
     const pct = Math.min(99, Math.floor((elapsed / dur) * 100));
     setProgress(pct);
     if (pct < 99 && isUploading) {
@@ -158,14 +270,12 @@ const BulkUploadForm: React.FC<Props> = ({
     if (reset) setProgress(0);
   };
 
-  // Smoothly finish to 100%, then clear UI & optionally close.
   const finishAndClear = () => {
     setProgress(100);
-    // brief pause so the user sees "100%"
     const id = setTimeout(() => {
       stopAnimation(true);
       resetState();
-      onOpenChange(false); // remove this line if you prefer to keep the dialog open
+      onOpenChange(false);
     }, 300);
     return () => clearTimeout(id);
   };
@@ -175,16 +285,13 @@ const BulkUploadForm: React.FC<Props> = ({
 
     startAnimation();
     try {
-      await onUpload(file!); // parent does API call; throw = failure
-      finishAndClear();      // success: show 100%, clear, close
-    } catch (err) {
-      // failure: stop anim but keep current UI so user can retry
+      await onUpload(file!);
+      finishAndClear();
+    } catch {
       stopAnimation(false);
     }
   };
 
-  // When uploading finishes externally (parent toggles isUploading),
-  // ensure the bar completes to 100 even if we didn't call finishAndClear.
   useEffect(() => {
     if (isUploading) {
       if (!rafRef.current) startAnimation();
@@ -204,7 +311,8 @@ const BulkUploadForm: React.FC<Props> = ({
         onOpenChange(o);
       }}
     >
-      <DialogContent className="bg-white w-[min(92vw,900px)] sm:max-w-[900px]">
+      {/* Force solid background & high z-index to avoid bleed-through */}
+      <DialogContent className="bg-white sm:max-w-[1100px] z-[60]">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>
@@ -213,22 +321,19 @@ const BulkUploadForm: React.FC<Props> = ({
         <div className="space-y-3">
           <Input type="file" accept={ACCEPT} onChange={onFileChange} />
           {file && (
-            <div className="text-sm text-gray-700">
-              Selected: <span className="font-medium">{file.name}</span>
-              {sheetName ? (
-                <span className="text-gray-500"> • Sheet: {sheetName}</span>
-              ) : null}
+            <div className="text-sm text-muted-foreground">
+              Selected: <span className="font-medium text-foreground">{file.name}</span>
+              {sheetName ? <span> • Sheet: {sheetName}</span> : null}
               {totalRows > 0 ? (
-                <span className="text-gray-500"> • {totalRows} row{totalRows > 1 ? "s" : ""}</span>
+                <span> • {totalRows} row{totalRows > 1 ? "s" : ""}</span>
               ) : null}
             </div>
           )}
           {!!error && <div className="text-sm text-red-600">{error}</div>}
 
-          {/* Upload progress */}
           {(isUploading || progress > 0) && (
             <div className="mt-2">
-              <div className="flex items-center justify-between text-xs text-gray-600 mb-1">
+              <div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
                 <span>
                   Uploading{totalRows ? ` ${totalRows} row${totalRows > 1 ? "s" : ""}` : ""}...
                 </span>
@@ -244,36 +349,33 @@ const BulkUploadForm: React.FC<Props> = ({
           )}
 
           {/* Preview */}
-          {rows.length > 0 && (
-            <div className="mt-2 border rounded-md overflow-x-auto max-h-80">
-              <Table className="table-fixed min-w-[640px]">
-                <TableHeader>
-                  <TableRow>
-                    {columns.map((c) => (
+          {rows.length > 0 && displayColumns.length > 0 && (
+            <div
+              className="
+                mt-2 border rounded-md bg-white shadow-sm
+                overflow-auto max-h-[60vh]
+              "
+            >
+              <Table className="table-fixed min-w-[900px] bg-white">
+                <TableHeader className="sticky top-0 bg-gray-50 z-10">
+                  <TableRow className="bg-gray-50">
+                    {displayColumns.map((c) => (
                       <TableHead
                         key={c}
-                        className={
-                          c.toLowerCase() === "code"
-                            ? "w-[120px]"
-                            : c.toLowerCase() === "name"
-                            ? "w-[280px]"
-                            : c.toLowerCase() === "description"
-                            ? "w-[380px]"
-                            : "w-[200px]"
-                        }
+                        className={`${widthByCol(c)} bg-gray-50 text-foreground`}
                       >
                         {c}
                       </TableHead>
                     ))}
                   </TableRow>
                 </TableHeader>
-                <TableBody>
+                <TableBody className="bg-white">
                   {rows.map((r, idx) => (
-                    <TableRow key={idx}>
-                      {columns.map((c) => (
+                    <TableRow key={idx} className="bg-white">
+                      {displayColumns.map((c) => (
                         <TableCell
                           key={c}
-                          className="whitespace-normal break-words align-top text-sm"
+                          className="whitespace-normal break-words align-top text-sm bg-white"
                         >
                           {String(r[c] ?? "")}
                         </TableCell>
@@ -286,10 +388,12 @@ const BulkUploadForm: React.FC<Props> = ({
           )}
 
           {rows.length > 0 && (
-            <div className="text-xs text-gray-600">
+            <div className="text-xs text-muted-foreground">
               Previewing first {Math.min(rows.length, MAX_PREVIEW_ROWS)} row
-              {rows.length > 1 ? "s" : ""}. Expected columns: <code>code</code>,{" "}
-              <code>name</code>, <code>description</code>.
+              {rows.length > 1 ? "s" : ""}. Expected columns:&nbsp;
+              <code>code</code>, <code>name</code>, <code>subject type</code>,{" "}
+              <code>description</code>, <code>grade level</code>, <code>strand</code>,{" "}
+              <code>semester</code>.
             </div>
           )}
         </div>
