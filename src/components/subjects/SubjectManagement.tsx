@@ -263,20 +263,19 @@ const SubjectManagement = () => {
   // Manual add submit
   const handleAddSubject = async (data: Omit<Subject, "id">) => {
     try {
+      if (!data.gradeLevel) {
+        toast({ variant: "destructive", title: "Missing grade level", description: "Grade level is required." });
+        return;
+      }
+
       const subjectData = {
+        // snake_case for PHP (only these; no duplicates)
         subj_code: data.code,
         subj_name: data.name,
         subj_description: data.description || "",
-        subj_units: data.units ?? 3,
-        subj_type: data.type ?? "Core",
-        subj_hours_per_week: data.hoursPerWeek ?? 3,
-
-        code: data.code,
-        name: data.name,
-        description: data.description || "",
-        units: data.units ?? 3,
-        type: data.type ?? "Core",
-        hoursPerWeek: data.hoursPerWeek ?? 3,
+        subj_type: data.type ?? "core",
+        strand: data.strand ?? "",
+        grade_level: data.gradeLevel, // REQUIRED
       };
 
       const response = await apiService.createSubject(subjectData);
@@ -293,24 +292,24 @@ const SubjectManagement = () => {
     }
   };
 
+
   // UPDATE
   const handleEditSubject = async (data: Omit<Subject, "id">) => {
     if (!currentSubject) return;
     try {
+      if (!data.gradeLevel) {
+        toast({ variant: "destructive", title: "Missing grade level", description: "Grade level is required." });
+        return;
+      }
+
       const subjectData = {
+        // snake_case only; no duplicates
         subj_code: data.code,
         subj_name: data.name,
         subj_description: data.description || "",
-        subj_units: data.units ?? 3,
-        subj_type: data.type ?? "Core",
-        subj_hours_per_week: data.hoursPerWeek ?? 3,
-
-        code: data.code,
-        name: data.name,
-        description: data.description || "",
-        units: data.units ?? 3,
-        type: data.type ?? "Core",
-        hoursPerWeek: data.hoursPerWeek ?? 3,
+        subj_type: data.type ?? "core",
+        strand: data.strand ?? "",
+        grade_level: data.gradeLevel, // REQUIRED
       };
 
       const response = await apiService.updateSubject(Number(currentSubject.id), subjectData);
@@ -326,6 +325,7 @@ const SubjectManagement = () => {
       toast({ title: "Error", description: `Failed to update subject: ${errorMessage}`, variant: "destructive" });
     }
   };
+
 
   // Bulk upload submit
   const handleBulkUpload = async (file: File) => {
@@ -626,6 +626,12 @@ const SubjectManagement = () => {
             code: currentSubject.code,
             name: currentSubject.name,
             description: currentSubject.description || "",
+            type: currentSubject.type || "Core",
+            strand: currentSubject.strand || "ICT",
+            gradeLevel:
+              currentSubject.gradeLevel && String(currentSubject.gradeLevel).trim() !== ""
+                ? String(currentSubject.gradeLevel)
+                : "11", // default
           }}
           onSubmit={handleEditSubject}
         />

@@ -38,15 +38,44 @@ export interface ApiResponse<T = any> {
   error?: string;
 }
 
-export interface Subject {
-  subj_id: number;
-  subj_name: string;
-  subj_code: string;
-  subj_units: number;
-  subj_type: string;
-  subj_hours_per_week: number;
+/** UI-facing Subject shape (what components consume) */
+export interface SubjectDTO {
+  id: number;
+  code: string;
+  name: string;
+  description?: string;
+  units?: number;
+  type?: string;          // Core, Applied, etc. (UI-friendly)
+  hoursPerWeek?: number;
+  gradeLevel?: string | null; // '11' | '12' | null
+  strand?: string | null;     // e.g., ICT, STEM, ...
+  schedule_count?: number;
 }
 
+/** Payload you can send to backend (accepts both camel & snake). */
+export type SubjectPayload = {
+  // backend snake_case (any optional; backend accepts partial on PUT)
+  subj_code?: string;
+  subj_name?: string;
+  subj_description?: string;
+  subj_units?: number;
+  subj_type?: string;
+  subj_hours_per_week?: number;
+  grade_level?: string | null;
+  strand?: string | null;
+  is_active?: number;
+
+  // camelCase aliases (your PHP accepts these too)
+  code?: string;
+  name?: string;
+  description?: string;
+  units?: number;
+  type?: string;              // maps to subj_type
+  hoursPerWeek?: number;
+  gradeLevel?: string | null;
+};
+
+// (Keeping your existing interfaces for the rest of the app)
 export interface Professor {
   prof_id: number;
   prof_name: string;
@@ -149,6 +178,28 @@ function coerceArray<T = any>(v: any): T[] {
 }
 
 class ApiService {
+  private prettifyType(v?: string) {
+    if (!v) return v;
+    const t = String(v).toLowerCase();
+    return t.charAt(0).toUpperCase() + t.slice(1); // core -> Core
+  }
+
+  // Map backend row (snake or camel) to a clean UI DTO
+  private mapSubjectRow(row: any): SubjectDTO {
+    return {
+      id: Number(row.subj_id ?? row.id),
+      code: row.subj_code ?? row.code ?? "",
+      name: row.subj_name ?? row.name ?? "",
+      description: row.subj_description ?? row.description ?? "",
+      units: row.subj_units ?? row.units,
+      type: this.prettifyType(row.subj_type ?? row.type),
+      hoursPerWeek: row.subj_hours_per_week ?? row.hoursPerWeek,
+      gradeLevel: row.grade_level ?? row.gradeLevel ?? null,
+      strand: row.strand ?? null,
+      schedule_count: Number(row.schedule_count ?? 0),
+    };
+    }
+
   async makeRequest<T>(
     method: "GET" | "POST" | "PUT" | "DELETE",
     endpoint: string,
@@ -181,22 +232,53 @@ class ApiService {
     }
   }
 
-  async getSubjects(): Promise<ApiResponse<Subject[]>> {
-    const response = await this.makeRequest<any>("GET", "/subjects.php");
-    return { ...response, data: response.data?.subjects || response.data?.data || response.data || [] };
+  // --- Subjects -------------------------------------------------------------
+
+  /** Optional filters are passed through; if PHP ignores them now, that's fine. */
+  async getSubjects(filters?: {
+    q?: string;                 // if you add q to PHP later
+    strand?: string;
+    type?: string;              // core/applied/specialized/contextualized/elective
+    grade_level?: string;       // '11' | '12'
+  }): Promise<ApiResponse<SubjectDTO[]>> {
+    const qp = new URLSearchParams();
+    if (filters?.q) qp.append("q", filters.q);
+    if (filters?.strand) qp.append("strand", filters.strand);
+    if (filters?.type) qp.append("type", filters.type);
+    if (filters?.grade_level) qp.append("grade_level", filters.grade_level);
+
+    const url = `/subjects.php${qp.toString() ? `?${qp.toString()}` : ""}`;
+    const response = await this.makeRequest<any>("GET", url);
+
+    const rows = response.data?.subjects || response.data?.data || response.data || [];
+    const mapped: SubjectDTO[] = Array.isArray(rows) ? rows.map((r: any) => this.mapSubjectRow(r)) : [];
+
+    return { ...response, data: mapped };
   }
 
-  async createSubject(subject: Omit<Subject, "subj_id">): Promise<ApiResponse<Subject>> {
-    return this.makeRequest<Subject>("POST", "/subjects.php", subject);
+  async createSubject(subject: SubjectPayload): Promise<ApiResponse<SubjectDTO>> {
+    // Backend accepts both camel & snake; send as-is.
+    return this.makeRequest<SubjectDTO>("POST", "/subjects.php", subject);
   }
 
-  async updateSubject(id: number, subject: Partial<Subject>): Promise<ApiResponse<Subject>> {
-    return this.makeRequest<Subject>("PUT", `/subjects.php?id=${id}`, subject);
+  async updateSubject(id: number, subject: SubjectPayload): Promise<ApiResponse<SubjectDTO>> {
+    return this.makeRequest<SubjectDTO>("PUT", `/subjects.php?id=${id}`, subject);
   }
 
   async deleteSubject(id: number): Promise<ApiResponse> {
     return this.makeRequest("DELETE", `/subjects.php?id=${id}`);
   }
+
+  async getSubjectProfessors(subjectId: number): Promise<ApiResponse> {
+    return this.makeRequest("GET", `/get_subject_professors.php?subject_id=${subjectId}`);
+  }
+
+  async getListOfSubjects(professorId?: number): Promise<ApiResponse> {
+    const url = professorId ? `/get_list_of_subjects.php?professor_id=${professorId}` : "/get_list_of_subjects.php";
+    return this.makeRequest("GET", url);
+  }
+
+  // --- Professors -----------------------------------------------------------
 
   async getProfessors(): Promise<ApiResponse<(ProfessorRow & { qualifications: string[]; subjects: number[] })[]>> {
     const base = await this.makeRequest<any>("GET", "/professors.php");
@@ -225,6 +307,8 @@ class ApiService {
     return this.makeRequest("DELETE", `/professors.php?id=${id}`);
   }
 
+  // --- Rooms ----------------------------------------------------------------
+
   async getRooms(): Promise<ApiResponse<Room[]>> {
     const response = await this.makeRequest<any>("GET", "/rooms.php");
     return { ...response, data: response.data?.rooms || response.data?.data || response.data || [] };
@@ -241,6 +325,8 @@ class ApiService {
   async deleteRoom(id: number): Promise<ApiResponse> {
     return this.makeRequest("DELETE", `/rooms.php?id=${id}`);
   }
+
+  // --- Sections -------------------------------------------------------------
 
   async getSections(): Promise<ApiResponse<Section[]>> {
     const response = await this.makeRequest<any>("GET", "/sections.php");
@@ -264,6 +350,8 @@ class ApiService {
     return this.makeRequest("DELETE", `/sections.php?id=${id}`);
   }
 
+  // --- Schedules ------------------------------------------------------------
+
   async getSchedules(filters?: { school_year?: string; semester?: string; professor_id?: number }): Promise<ApiResponse<Schedule[]>> {
     const queryParams = new URLSearchParams();
     if (filters?.school_year) queryParams.append("school_year", filters.school_year);
@@ -272,31 +360,6 @@ class ApiService {
     const url = `/schedule.php${queryParams.toString() ? `?${queryParams.toString()}` : ""}`;
     const response = await this.makeRequest<any>("GET", url);
     return { ...response, data: response.data?.schedules || response.data?.data || response.data || [] };
-  }
-
-  async bulkUploadSubjects(formData: FormData): Promise<ApiResponse> {
-    try {
-      const response = await apiClient.post("/subjects_bulk_upload.php", formData, {
-        headers: { "Content-Type": "multipart/form-data" },
-        timeout: 60000,
-      });
-      return {
-        success: response.data?.status === "success" || response.data?.success === true,
-        status: response.data?.status,
-        message: response.data?.message,
-        data: response.data?.data ?? response.data,
-      };
-    } catch (error: any) {
-      if (axios.isAxiosError(error)) {
-        return {
-          success: false,
-          status: "error",
-          message: error.response?.data?.message || error.message,
-          error: error.response?.data?.error || error.message,
-        };
-      }
-      return { success: false, status: "error", message: "An unexpected error occurred", error: String(error) };
-    }
   }
 
   async createSchedule(schedule: Omit<Schedule, "schedule_id">): Promise<ApiResponse<Schedule>> {
@@ -363,6 +426,8 @@ class ApiService {
     return this.makeRequest("POST", "/validate_time_slots.php", data);
   }
 
+  // --- Misc / Dashboard / Heads --------------------------------------------
+
   async getSchoolHeads(): Promise<ApiResponse> {
     return this.makeRequest("GET", "/school_head.php");
   }
@@ -391,29 +456,31 @@ class ApiService {
     return this.makeRequest("GET", "/dashboard_workload.php");
   }
 
-  async testConnection(): Promise<ApiResponse> {
-    return this.makeRequest("GET", "/test_connection_simple.php");
-  }
+  // --- Bulk upload / Sync / Optimizer --------------------------------------
 
-  async getSubjectProfessors(subjectId: number): Promise<ApiResponse> {
-    return this.makeRequest("GET", `/get_subject_professors.php?subject_id=${subjectId}`);
-  }
-
-  async getListOfSubjects(professorId?: number): Promise<ApiResponse> {
-    const url = professorId ? `/get_list_of_subjects.php?professor_id=${professorId}` : "/get_list_of_subjects.php";
-    return this.makeRequest("GET", url);
-  }
-
-  async getListOfSections(): Promise<ApiResponse> {
-    return this.makeRequest("GET", "/get_list_of_sections.php");
-  }
-
-  async getTeachersWithoutSubjects(): Promise<ApiResponse> {
-    return this.makeRequest("GET", "/get_teachers_without_subjects.php");
-  }
-
-  async getSubjectsWithoutRooms(): Promise<ApiResponse> {
-    return this.makeRequest("GET", "/get_subjects_without_rooms.php");
+  async bulkUploadSubjects(formData: FormData): Promise<ApiResponse> {
+    try {
+      const response = await apiClient.post("/subjects_bulk_upload.php", formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+        timeout: 60000,
+      });
+      return {
+        success: response.data?.status === "success" || response.data?.success === true,
+        status: response.data?.status,
+        message: response.data?.message,
+        data: response.data?.data ?? response.data,
+      };
+    } catch (error: any) {
+      if (axios.isAxiosError(error)) {
+        return {
+          success: false,
+          status: "error",
+          message: error.response?.data?.message || error.message,
+          error: error.response?.data?.error || error.message,
+        };
+      }
+      return { success: false, status: "error", message: "An unexpected error occurred", error: String(error) };
+    }
   }
 
   async optimizeSchedule(optimizationData: any): Promise<ApiResponse> {
@@ -465,7 +532,6 @@ class ApiService {
     }
     return result;
   }
-  
 }
 
 export const apiService = new ApiService();

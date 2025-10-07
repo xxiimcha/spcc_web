@@ -1,14 +1,21 @@
-import React, { useState, useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogFooter,
-  DialogDescription,
 } from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import SuccessMessage from "../popupmsg/SuccessMessage";
 import ErrorMessage from "../popupmsg/ErrorMessage";
 
@@ -24,7 +31,15 @@ interface Subject {
   code: string;
   name: string;
   description?: string;
+  type?: string;       // Core | Applied | Specialized | Elective
+  strand?: string;     // ICT | STEM | ABM | HUMSS | GAS | HE | IA
+  gradeLevel: string;  // "11" | "12"   (REQUIRED)
 }
+
+// dropdown options
+const TYPE_OPTIONS = ["Core", "Applied", "Specialized", "Elective"];
+const STRAND_OPTIONS = ["ICT", "STEM", "ABM", "HUMSS", "GAS", "HE", "IA"];
+const GRADE_OPTIONS = ["11", "12"];
 
 const SubjectForm: React.FC<SubjectFormProps> = ({
   open,
@@ -37,57 +52,67 @@ const SubjectForm: React.FC<SubjectFormProps> = ({
   const [description, setDescription] = useState<string>(
     initialData?.description || ""
   );
+  const [type, setType] = useState<string>(initialData?.type || TYPE_OPTIONS[0]);
+  const [strand, setStrand] = useState<string>(
+    initialData?.strand || STRAND_OPTIONS[0]
+  );
+  const [gradeLevel, setGradeLevel] = useState<string>(
+    (initialData as any)?.gradeLevel || GRADE_OPTIONS[0]
+  );
 
-  // Success and Error message states (using your component prop names)
+  // feedback dialogs
   const [isSuccessOpen, setIsSuccessOpen] = useState(false);
   const [isErrorOpen, setIsErrorOpen] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
 
-  // Reset form when initialData changes or dialog opens
+  // reset when opening / initialData changes
   useEffect(() => {
     if (initialData) {
       setCode(initialData.code || "");
       setName(initialData.name || "");
       setDescription(initialData.description || "");
+      setType(initialData.type || TYPE_OPTIONS[0]);
+      setStrand(initialData.strand || STRAND_OPTIONS[0]);
+      setGradeLevel((initialData as any).gradeLevel || GRADE_OPTIONS[0]);
     } else if (open) {
-      // Clear form when opening for a new subject
       setCode("");
       setName("");
       setDescription("");
+      setType(TYPE_OPTIONS[0]);
+      setStrand(STRAND_OPTIONS[0]);
+      setGradeLevel(GRADE_OPTIONS[0]);
     }
   }, [initialData, open]);
 
-  const handleCloseSuccess = () => {
-    setIsSuccessOpen(false);
-  };
-
-  const handleCloseError = () => {
-    setIsErrorOpen(false);
-  };
-
   const handleSubmit = () => {
-    // Validate form fields
     if (!code.trim() || !name.trim()) {
       setErrorMessage("Subject code and name are required.");
       setIsErrorOpen(true);
       return;
     }
+    if (!gradeLevel) {
+      setErrorMessage("Grade level is required.");
+      setIsErrorOpen(true);
+      return;
+    }
 
     try {
-      onSubmit({ code, name, description });
+      onSubmit({
+        code: code.trim(),
+        name: name.trim(),
+        description: description?.trim() || "",
+        type,
+        strand,
+        gradeLevel, // REQUIRED
+      } as Omit<Subject, "id">);
+
       setSuccessMessage(
-        initialData
-          ? "Subject updated successfully!"
-          : "Subject added successfully!"
+        initialData ? "Subject updated successfully!" : "Subject added successfully!"
       );
       setIsSuccessOpen(true);
-
-      // Close the form dialog after successful submission
-      setTimeout(() => {
-        onOpenChange(false);
-      }, 500);
-    } catch (error) {
+      setTimeout(() => onOpenChange(false), 500);
+    } catch {
       setErrorMessage("Failed to save subject. Please try again.");
       setIsErrorOpen(true);
     }
@@ -96,11 +121,9 @@ const SubjectForm: React.FC<SubjectFormProps> = ({
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="sm:max-w-[425px] bg-white">
+        <DialogContent className="sm:max-w-[520px] bg-white">
           <DialogHeader>
-            <DialogTitle>
-              {initialData ? "Edit Subject" : "Add New Subject"}
-            </DialogTitle>
+            <DialogTitle>{initialData ? "Edit Subject" : "Add New Subject"}</DialogTitle>
             <DialogDescription>
               {initialData
                 ? "Update the subject information below."
@@ -110,10 +133,7 @@ const SubjectForm: React.FC<SubjectFormProps> = ({
 
           <div className="space-y-4">
             <div>
-              <label
-                htmlFor="code"
-                className="block text-sm font-medium text-gray-700"
-              >
+              <label htmlFor="code" className="block text-sm font-medium text-gray-700">
                 Code
               </label>
               <Input
@@ -125,10 +145,7 @@ const SubjectForm: React.FC<SubjectFormProps> = ({
             </div>
 
             <div>
-              <label
-                htmlFor="name"
-                className="block text-sm font-medium text-gray-700"
-              >
+              <label htmlFor="name" className="block text-sm font-medium text-gray-700">
                 Name
               </label>
               <Input
@@ -139,11 +156,62 @@ const SubjectForm: React.FC<SubjectFormProps> = ({
               />
             </div>
 
+            {/* Row of Type + Strand */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Type</label>
+                <Select value={type} onValueChange={setType}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {TYPE_OPTIONS.map((opt) => (
+                      <SelectItem key={opt} value={opt}>
+                        {opt}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Strand</label>
+                <Select value={strand} onValueChange={setStrand}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {STRAND_OPTIONS.map((opt) => (
+                      <SelectItem key={opt} value={opt}>
+                        {opt}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            {/* Grade Level */}
             <div>
-              <label
-                htmlFor="description"
-                className="block text-sm font-medium text-gray-700"
-              >
+              <label className="block text-sm font-medium text-gray-700">
+                Grade Level <span className="text-red-500">*</span>
+              </label>
+              <Select value={gradeLevel} onValueChange={setGradeLevel}>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {GRADE_OPTIONS.map((g) => (
+                    <SelectItem key={g} value={g}>
+                      {g}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div>
+              <label htmlFor="description" className="block text-sm font-medium text-gray-700">
                 Description
               </label>
               <Input
@@ -166,19 +234,8 @@ const SubjectForm: React.FC<SubjectFormProps> = ({
         </DialogContent>
       </Dialog>
 
-      {/* Success Message Dialog */}
-      <SuccessMessage
-        isOpen={isSuccessOpen}
-        onClose={handleCloseSuccess}
-        message={successMessage}
-      />
-
-      {/* Error Message Dialog */}
-      <ErrorMessage
-        isOpen={isErrorOpen}
-        onClose={handleCloseError}
-        message={errorMessage}
-      />
+      <SuccessMessage isOpen={isSuccessOpen} onClose={() => setIsSuccessOpen(false)} message={successMessage} />
+      <ErrorMessage isOpen={isErrorOpen} onClose={() => setIsErrorOpen(false)} message={errorMessage} />
     </>
   );
 };
