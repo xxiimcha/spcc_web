@@ -1,5 +1,16 @@
-import React, { useState, useEffect } from "react";
-import { PlusCircle, Pencil, Trash2, Search, Eye, Upload, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from "lucide-react";
+import React, { useState, useEffect, useMemo } from "react";
+import {
+  PlusCircle,
+  Pencil,
+  Trash2,
+  Search,
+  Eye,
+  Upload,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
+} from "lucide-react";
 import { apiService } from "@/services/apiService";
 import {
   Table,
@@ -30,14 +41,27 @@ import { toast } from "@/components/ui/use-toast";
 import SubjectForm from "./SubjectForm";
 import BulkUploadForm from "./BulkUploadForm";
 
+// NEW: shadcn Selects for filters
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+
 interface Subject {
   id: string;
   code: string;
   name: string;
   description?: string;
   units?: number;
-  type?: string;
+  type?: string;          // e.g., "Core", "Applied", etc.
   hoursPerWeek?: number;
+  // NEW:
+  gradeLevel?: string;    // e.g., "11", "12"
+  strand?: string;        // e.g., "ICT", "STEM"
+  schedule_count?: number;
 }
 
 interface Professor {
@@ -57,6 +81,12 @@ const API_URL = "http://localhost/spcc_database/subjects.php";
 const ASSIGNMENT_API_URL = "http://localhost/spcc_database/get_subject_professors.php";
 
 const PAGE_SIZES = [10, 25, 50];
+
+const ALL_VALUES = {
+  strand: "__ALL_STRAND__",
+  type: "__ALL_TYPE__",
+  grade: "__ALL_GRADE__",
+} as const;
 
 const SubjectManagement = () => {
   const [subjects, setSubjects] = useState<Subject[]>([]);
@@ -82,24 +112,27 @@ const SubjectManagement = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState<number>(PAGE_SIZES[0]);
 
+  // NEW: filter states
+  const [filterStrand, setFilterStrand] = useState<string>("");      // "" means All
+  const [filterType, setFilterType] = useState<string>("");
+  const [filterGrade, setFilterGrade] = useState<string>("");
+
   // Fetch subjects
   const fetchSubjects = async () => {
     try {
       setIsLoading(true);
-
-      // If you later add server-side pagination:
-      // const response = await apiService.getSubjects({ page: currentPage, perPage: pageSize, search: searchQuery });
-
       const response = await apiService.getSubjects();
       if (response.success && Array.isArray(response.data)) {
-        const mappedSubjects = response.data.map((subject: any) => ({
+        const mappedSubjects: Subject[] = response.data.map((subject: any) => ({
           id: subject.subj_id?.toString() || subject.id?.toString(),
           name: subject.subj_name || subject.name,
           code: subject.subj_code || subject.code,
           description: subject.subj_description || subject.description,
           units: subject.subj_units || subject.units,
-          type: subject.subj_type || subject.type,
+          type: subject.subj_type || subject.type,                   // map type
           hoursPerWeek: subject.subj_hours_per_week || subject.hoursPerWeek,
+          gradeLevel: subject.grade_level || subject.gradeLevel || "", // map grade level
+          strand: subject.strand || "",                                // map strand
           schedule_count: subject.schedule_count || 0,
         }));
         setSubjects(mappedSubjects);
@@ -162,18 +195,58 @@ const SubjectManagement = () => {
     fetchSubjects();
   }, []);
 
-  // Filter for search
-  const filteredSubjects = subjects.filter(
-    (subject) =>
-      subject &&
-      ((subject.code && subject.code.toLowerCase().includes(searchQuery.toLowerCase())) ||
-        (subject.name && subject.name.toLowerCase().includes(searchQuery.toLowerCase())))
-  );
+  // Build filter option lists from current subjects
+  const strandOptions = useMemo(() => {
+    const set = new Set<string>();
+    subjects.forEach((s) => s.strand && set.add(String(s.strand)));
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [subjects]);
 
-  // Reset to page 1 when search or page size changes
+  const typeOptions = useMemo(() => {
+    const set = new Set<string>();
+    subjects.forEach((s) => s.type && set.add(String(s.type)));
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [subjects]);
+
+  const gradeOptions = useMemo(() => {
+    const set = new Set<string>();
+    subjects.forEach((s) => s.gradeLevel && set.add(String(s.gradeLevel)));
+    // numeric-ish sort if all numeric, else lexicographic
+    const allNum = Array.from(set).every((v) => /^\d+$/.test(v));
+    const arr = Array.from(set);
+    return allNum ? arr.sort((a, b) => Number(a) - Number(b)) : arr.sort((a, b) => a.localeCompare(b));
+  }, [subjects]);
+
+  // Filter logic (search + filters)
+  const filteredSubjects = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return subjects.filter((subject) => {
+      if (!subject) return false;
+      // search
+      const matchSearch =
+        !q ||
+        (subject.code && subject.code.toLowerCase().includes(q)) ||
+        (subject.name && subject.name.toLowerCase().includes(q));
+      if (!matchSearch) return false;
+
+      // filters
+      const matchStrand = !filterStrand || (subject.strand && String(subject.strand) === filterStrand);
+      if (!matchStrand) return false;
+
+      const matchType = !filterType || (subject.type && String(subject.type) === filterType);
+      if (!matchType) return false;
+
+      const matchGrade = !filterGrade || (subject.gradeLevel && String(subject.gradeLevel) === filterGrade);
+      if (!matchGrade) return false;
+
+      return true;
+    });
+  }, [subjects, searchQuery, filterStrand, filterType, filterGrade]);
+
+  // Reset to page 1 when search, page size, OR filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchQuery, pageSize]);
+  }, [searchQuery, pageSize, filterStrand, filterType, filterGrade]);
 
   // Client-side pagination math
   const totalItems = filteredSubjects.length;
@@ -188,7 +261,6 @@ const SubjectManagement = () => {
   const gotoLast = () => setCurrentPage(totalPages);
 
   // Manual add submit
-  // CREATE
   const handleAddSubject = async (data: Omit<Subject, "id">) => {
     try {
       const subjectData = {
@@ -233,7 +305,6 @@ const SubjectManagement = () => {
         subj_type: data.type ?? "Core",
         subj_hours_per_week: data.hoursPerWeek ?? 3,
 
-        // new clean keys
         code: data.code,
         name: data.name,
         description: data.description || "",
@@ -255,7 +326,6 @@ const SubjectManagement = () => {
       toast({ title: "Error", description: `Failed to update subject: ${errorMessage}`, variant: "destructive" });
     }
   };
-
 
   // Bulk upload submit
   const handleBulkUpload = async (file: File) => {
@@ -335,6 +405,12 @@ const SubjectManagement = () => {
     setIsDeleteDialogOpen(true);
   };
 
+  const clearFilters = () => {
+    setFilterStrand("");
+    setFilterType("");
+    setFilterGrade("");
+  };
+
   return (
     <div className="w-full p-6 bg-white rounded-lg shadow-sm">
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between mb-6">
@@ -361,8 +437,9 @@ const SubjectManagement = () => {
         </DropdownMenu>
       </div>
 
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-6">
-        <div className="relative grow">
+      {/* Search + Filters */}
+      <div className="flex flex-col gap-3 md:grid md:grid-cols-2 lg:grid-cols-5 mb-6">
+        <div className="relative col-span-2">
           <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
           <Input
             placeholder="Search subjects..."
@@ -372,20 +449,66 @@ const SubjectManagement = () => {
           />
         </div>
 
-        {/* Page size selector */}
-        <div className="flex items-center gap-2">
-          <span className="text-sm text-muted-foreground">Rows per page</span>
-          <select
-            className="border rounded-md px-2 py-1 text-sm"
-            value={pageSize}
-            onChange={(e) => setPageSize(Number(e.target.value))}
-          >
-            {PAGE_SIZES.map((n) => (
-              <option key={n} value={n}>
-                {n}
-              </option>
+        {/* Strand filter */}
+        <Select
+          value={filterStrand}
+          onValueChange={(v) => setFilterStrand(v === ALL_VALUES.strand ? "" : v)}
+        >
+          <SelectTrigger className="w-full">
+            <SelectValue placeholder="All strands" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={ALL_VALUES.strand}>All strands</SelectItem>
+            {strandOptions.map((s) => (
+              <SelectItem key={s} value={s}>
+                {s}
+              </SelectItem>
             ))}
-          </select>
+          </SelectContent>
+        </Select>
+
+        {/* Type filter */}
+        <Select
+          value={filterType}
+          onValueChange={(v) => setFilterType(v === ALL_VALUES.type ? "" : v)}
+        >
+          <SelectTrigger className="w-full">
+            <SelectValue placeholder="All types" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={ALL_VALUES.type}>All types</SelectItem>
+            {typeOptions.map((t) => (
+              <SelectItem key={t} value={t}>
+                {t}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        {/* Grade level filter */}
+        <Select
+          value={filterGrade}
+          onValueChange={(v) => setFilterGrade(v === ALL_VALUES.grade ? "" : v)}
+        >
+          <SelectTrigger className="w-full">
+            <SelectValue placeholder="All grade levels" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={ALL_VALUES.grade}>All grade levels</SelectItem>
+            {gradeOptions.map((g) => (
+              <SelectItem key={g} value={g}>
+                {g}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+
+        {/* Clear filters button (full width on small, inline on large) */}
+        <div className="lg:col-span-1">
+          <Button variant="outline" className="w-full" onClick={clearFilters}>
+            Clear filters
+          </Button>
         </div>
       </div>
 
@@ -445,9 +568,11 @@ const SubjectManagement = () => {
           {/* Pagination footer */}
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mt-4">
             <div className="text-sm text-muted-foreground">
-              Showing <span className="font-medium">{totalItems === 0 ? 0 : pageStartIndex + 1}</span>–<span className="font-medium">{pageEndIndex}</span> of{" "}
+              Showing{" "}
+              <span className="font-medium">{totalItems === 0 ? 0 : pageStartIndex + 1}</span>
+              –<span className="font-medium">{pageEndIndex}</span> of{" "}
               <span className="font-medium">{totalItems}</span> subjects
-              {searchQuery ? (
+              {searchQuery || filterStrand || filterType || filterGrade ? (
                 <span>
                   {" "}
                   (filtered from <span className="font-medium">{subjects.length}</span>)
@@ -464,13 +589,24 @@ const SubjectManagement = () => {
               </Button>
 
               <span className="text-sm px-2">
-                Page <span className="font-medium">{currentPage}</span> of <span className="font-medium">{totalPages}</span>
+                Page <span className="font-medium">{currentPage}</span> of{" "}
+                <span className="font-medium">{totalPages}</span>
               </span>
 
-              <Button variant="outline" size="icon" onClick={gotoNext} disabled={currentPage === totalPages || totalItems === 0}>
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={gotoNext}
+                disabled={currentPage === totalPages || totalItems === 0}
+              >
                 <ChevronRight className="h-4 w-4" />
               </Button>
-              <Button variant="outline" size="icon" onClick={gotoLast} disabled={currentPage === totalPages || totalItems === 0}>
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={gotoLast}
+                disabled={currentPage === totalPages || totalItems === 0}
+              >
                 <ChevronsRight className="h-4 w-4" />
               </Button>
             </div>
