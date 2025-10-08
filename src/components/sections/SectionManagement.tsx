@@ -516,12 +516,20 @@ const SectionManagement: React.FC = () => {
         onOpenChange={setAssignOpen}
         section={
           assignFor
-            ? { section_id: assignFor.section_id, section_name: assignFor.section_name }
+            ? {
+                section_id: assignFor.section_id,
+                section_name: assignFor.section_name,
+                strand: assignFor.strand,         
+                grade_level: assignFor.grade_level, 
+                subject_ids: assignFor.subject_ids ?? [],
+              }
             : null
         }
         apiBase={API_BASE}
         onSaved={fetchSections}
       />
+
+
 
       {/* View Assigned Subjects dialog */}
       <Dialog open={viewOpen} onOpenChange={setViewOpen}>

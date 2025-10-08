@@ -3,12 +3,14 @@ import axios from "axios";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Badge } from "@/components/ui/badge";
 import { toast } from "@/components/ui/use-toast";
 
 export interface SectionRef {
   section_id: number;
   section_name: string;
+  strand: string;
+  grade_level: "11" | "12";
+  subject_ids?: number[];
 }
 
 export interface Subject {
@@ -17,23 +19,18 @@ export interface Subject {
   subj_name: string;
   subj_description?: string | null;
   schedule_count: number;
+  strand?: string | null;
+  grade_level?: "11" | "12" | null;
 }
 
 type Props = {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   section: SectionRef | null;
-  apiBase?: string; // optional override, defaults to http://localhost/spcc_database
-  onSaved?: () => void; // optional: callback after successful save
+  apiBase?: string;
+  onSaved?: () => void;
 };
 
-/**
- * AssignSubjectsDialog
- * - Lists ALL subjects from the DB
- * - Does NOT fetch/show already assigned subjects yet
- * - Starts with all checkboxes UNCHECKED
- * - Saves selected subject IDs to /section_subjects.php (optional)
- */
 const AssignSubjectsDialog: React.FC<Props> = ({
   open,
   onOpenChange,
@@ -46,17 +43,52 @@ const AssignSubjectsDialog: React.FC<Props> = ({
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
+  const fetchAssignedIds = async (sectionId: number): Promise<number[]> => {
+    try {
+      const res = await axios.get(`${apiBase}/sections.php`, { params: { id: sectionId } });
+      const ids = res?.data?.data?.subject_ids;
+      return Array.isArray(ids) ? ids.map((n: any) => Number(n)) : [];
+    } catch {
+      return [];
+    }
+  };
+
   const loadSubjects = async () => {
     if (!section) return;
     try {
       setLoading(true);
-      const subsRes = await axios.get(`${apiBase}/subjects.php`);
-      if (!subsRes.data?.success || !Array.isArray(subsRes.data.data)) {
-        throw new Error("Failed to load subjects");
+      let res = await axios.get(`${apiBase}/subjects.php`, {
+        params: { grade_level: section.grade_level, strand: section.strand },
+      });
+
+      let list: Subject[] = [];
+      if (res.data?.success && Array.isArray(res.data.data)) {
+        list = res.data.data as Subject[];
+      } else {
+        res = await axios.get(`${apiBase}/subjects.php`);
+        if (!res.data?.success || !Array.isArray(res.data.data)) {
+          throw new Error("Failed to load subjects");
+        }
+        const all = res.data.data as Subject[];
+        list = all.filter(
+          (s) =>
+            String(s.grade_level ?? "") === section.grade_level &&
+            String((s.strand ?? "").toLowerCase()) === section.strand.toLowerCase()
+        );
       }
-      setAllSubjects(subsRes.data.data as Subject[]);
-      // Do NOT pre-check anything (no assigned fetch at this step)
-      setSelected(new Set());
+
+      setAllSubjects(list);
+
+      let assignedIds = Array.isArray(section.subject_ids)
+        ? section.subject_ids
+        : await fetchAssignedIds(section.section_id);
+
+      const present = new Set(list.map((s) => s.subj_id));
+      const prechecked = new Set<number>();
+      assignedIds.forEach((id) => {
+        if (present.has(id)) prechecked.add(Number(id));
+      });
+      setSelected(prechecked);
     } catch (e: any) {
       console.error(e);
       toast({
@@ -71,8 +103,7 @@ const AssignSubjectsDialog: React.FC<Props> = ({
 
   useEffect(() => {
     if (open) loadSubjects();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, section?.section_id]);
+  }, [open, section?.section_id, section?.grade_level, section?.strand]);
 
   const toggle = (id: number) => {
     setSelected((prev) => {
@@ -87,10 +118,9 @@ const AssignSubjectsDialog: React.FC<Props> = ({
     if (!section) return;
     try {
       setSaving(true);
-      const body = { section_id: section.section_id, subj_ids: Array.from(selected) };
-        const res = await axios.put(`${apiBase}/sections.php?id=${section.section_id}`, {
-            subj_ids: Array.from(selected),
-        });
+      const res = await axios.put(`${apiBase}/sections.php?id=${section.section_id}`, {
+        subj_ids: Array.from(selected),
+      });
       if (!res.data?.success) throw new Error(res.data?.message || "Failed to save");
       toast({ title: "Saved", description: "Subjects assigned to section." });
       onOpenChange(false);
@@ -112,7 +142,8 @@ const AssignSubjectsDialog: React.FC<Props> = ({
       <DialogContent className="max-w-3xl">
         <DialogHeader>
           <DialogTitle>
-            Assign Subjects {section ? `• ${section.section_name}` : ""}
+            Assign Subjects{" "}
+            {section ? `• ${section.section_name} (Grade ${section.grade_level} • ${section.strand})` : ""}
           </DialogTitle>
         </DialogHeader>
 
@@ -129,7 +160,7 @@ const AssignSubjectsDialog: React.FC<Props> = ({
               </div>
             ) : allSubjects.length === 0 ? (
               <div className="py-12 text-center text-sm text-muted-foreground">
-                No subjects found.
+                No subjects found matching this grade level & strand.
               </div>
             ) : (
               allSubjects.map((s) => {
