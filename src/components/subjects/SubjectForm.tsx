@@ -31,13 +31,13 @@ interface Subject {
   code: string;
   name: string;
   description?: string;
-  type?: string;       // Core | Applied | Specialized | Elective
-  strand?: string;     // ICT | STEM | ABM | HUMSS | GAS | HE | IA
-  gradeLevel: string;  // "11" | "12"   (REQUIRED)
+  type?: string;    
+  strand?: string;     
+  gradeLevel: string;  
 }
 
 // dropdown options
-const TYPE_OPTIONS = ["Core", "Applied", "Specialized", "Elective"];
+const TYPE_OPTIONS = ["core", "contextualized", "Specialized"];
 const STRAND_OPTIONS = ["ICT", "STEM", "ABM", "HUMSS", "GAS", "HE", "IA"];
 const GRADE_OPTIONS = ["11", "12"];
 
