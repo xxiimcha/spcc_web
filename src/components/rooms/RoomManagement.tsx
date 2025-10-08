@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useState, useEffect } from "react";
 import axios from "axios";
 import { Button } from "@/components/ui/button";
 import {
@@ -109,7 +109,6 @@ const RoomSectionDialog: React.FC<RoomSectionDialogProps> = ({
   const [error, setError] = React.useState<string | null>(null);
   const [loadingSections, setLoadingSections] = React.useState(false);
 
-  // Load ONLY sections that are NOT assigned to any room
   React.useEffect(() => {
     const loadUnassignedSections = async () => {
       setLoadingSections(true);
@@ -119,12 +118,9 @@ const RoomSectionDialog: React.FC<RoomSectionDialogProps> = ({
         if (!data?.success || !Array.isArray(data.data)) {
           throw new Error("Invalid sections response");
         }
-
-        // API returns each section with a `rooms` array
         const unassigned = data.data.filter(
           (s: any) => !Array.isArray(s.rooms) || s.rooms.length === 0
         );
-
         setSections(unassigned);
       } catch (e: any) {
         setError(e?.message || "Failed to load sections");
@@ -143,7 +139,6 @@ const RoomSectionDialog: React.FC<RoomSectionDialogProps> = ({
     setIsLoading(true);
     setError(null);
     try {
-      // Double-check the section is still unassigned
       const secRes = await axios.get(
         `http://localhost/spcc_database/sections.php?id=${selectedSection}`
       );
@@ -151,7 +146,6 @@ const RoomSectionDialog: React.FC<RoomSectionDialogProps> = ({
 
       const section = secRes.data.data;
 
-      // If it already has any room, block (prevents race conditions)
       if (Array.isArray(section.rooms) && section.rooms.length > 0) {
         toast({
           title: "Section already assigned",
@@ -161,7 +155,6 @@ const RoomSectionDialog: React.FC<RoomSectionDialogProps> = ({
         return;
       }
 
-      // Assign to this room
       const payload = {
         section_name: section.section_name,
         grade_level: section.grade_level,
@@ -266,7 +259,6 @@ const RoomManagement = () => {
   const [selectedRoomForSection, setSelectedRoomForSection] = useState<Room | null>(null);
   const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
 
-  // fetch
   const fetchRooms = async () => {
     setLoading(true);
     setError(null);
@@ -288,7 +280,6 @@ const RoomManagement = () => {
 
   useEffect(() => { fetchRooms(); }, []);
 
-  // helpers
   const getRoomTypeBadge = (type: string) =>
     type === "Lecture"
       ? "bg-blue-50 text-blue-700 border-blue-200"
@@ -332,7 +323,6 @@ const RoomManagement = () => {
       return s;
     });
 
-  // actions
   const handleRoomCreated = () => {
     setIsFormOpen(false);
     fetchRooms();
@@ -376,7 +366,20 @@ const RoomManagement = () => {
   };
 
   const handleEditRoom = (room: Room) => { setSelectedRoom(room); setIsFormOpen(true); };
-  const handleAddSection = (room: Room) => { setSelectedRoomForSection(room); setSectionDialogOpen(true); };
+
+  // GUARD: block assignment for Laboratory rooms
+  const handleAddSection = (room: Room) => {
+    if (room.type?.toLowerCase() === "laboratory") {
+      toast({
+        title: "Not allowed",
+        description: "Laboratory rooms cannot be assigned to sections.",
+        variant: "destructive",
+      });
+      return;
+    }
+    setSelectedRoomForSection(room);
+    setSectionDialogOpen(true);
+  };
 
   const fetchRoomDetails = async (roomId: number) => {
     try {
@@ -395,11 +398,8 @@ const RoomManagement = () => {
     fetchRoomDetails(room.id);
   };
 
-  /* ---------- Render ---------- */
-
   return (
     <div className="container mx-auto py-6 px-4 sm:px-6">
-      {/* Header */}
       <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between mb-6">
         <div>
           <h1 className="text-2xl sm:text-3xl font-semibold">Room Management</h1>
@@ -428,7 +428,6 @@ const RoomManagement = () => {
         </div>
       </div>
 
-      {/* Body */}
       {loading ? (
         <div className="flex justify-center items-center h-64">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary" />
@@ -461,7 +460,6 @@ const RoomManagement = () => {
         <div className="space-y-6">
           {groupRoomsByFloor(getFilteredRooms(rooms)).map((grp) => (
             <Card key={grp.floor} className="overflow-hidden border">
-              {/* Floor header */}
               <div className="sticky top-0 z-10 bg-muted/40">
                 <CardHeader className="py-3">
                   <button
@@ -486,88 +484,94 @@ const RoomManagement = () => {
                 </CardHeader>
               </div>
 
-              {/* Rooms grid */}
               {expandedFloors.has(grp.floor) && (
                 <CardContent className="pt-4">
                   <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                    {grp.rooms.map((room) => (
-                      <Card key={room.id} className="hover:shadow-sm transition-shadow">
-                        <CardHeader className="pb-2">
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="min-w-0">
-                              <CardTitle className="text-base truncate">Room {room.number}</CardTitle>
-                              <div className="mt-1">
-                                <Badge className={getRoomTypeBadge(room.type)}>{room.type}</Badge>
+                    {grp.rooms.map((room) => {
+                      const isLab = room.type?.toLowerCase() === "laboratory";
+                      return (
+                        <Card key={room.id} className="hover:shadow-sm transition-shadow">
+                          <CardHeader className="pb-2">
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <CardTitle className="text-base truncate">Room {room.number}</CardTitle>
+                                <div className="mt-1">
+                                  <Badge className={getRoomTypeBadge(room.type)}>{room.type}</Badge>
+                                </div>
+                              </div>
+
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button variant="ghost" size="icon" className="h-8 w-8">
+                                    <MoreVertical className="h-4 w-4" />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end" className="w-40">
+                                  <DropdownMenuItem onClick={() => openViewDialog(room)}>
+                                    <Eye className="mr-2 h-4 w-4" />
+                                    View details
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem onClick={() => handleEditRoom(room)}>
+                                    <Pencil className="mr-2 h-4 w-4" />
+                                    Edit
+                                  </DropdownMenuItem>
+                                  <DropdownMenuSeparator />
+                                  <DropdownMenuItem
+                                    className="text-red-600 focus:text-red-700"
+                                    onClick={() => confirmDelete(room.id)}
+                                  >
+                                    <Trash2 className="mr-2 h-4 w-4" />
+                                    Delete
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            </div>
+                          </CardHeader>
+
+                          <CardContent className="space-y-3">
+                            <div className="flex flex-wrap gap-2 text-sm text-muted-foreground">
+                              <div className="inline-flex items-center gap-1.5">
+                                <Users className="h-4 w-4" />
+                                <span>{room.capacity} students</span>
+                              </div>
+                              <div className="inline-flex items-center gap-1.5">
+                                <MapPin className="h-4 w-4" />
+                                <span>{room.type}</span>
                               </div>
                             </div>
 
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <Button variant="ghost" size="icon" className="h-8 w-8">
-                                  <MoreVertical className="h-4 w-4" />
-                                </Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end" className="w-40">
-                                <DropdownMenuItem onClick={() => openViewDialog(room)}>
-                                  <Eye className="mr-2 h-4 w-4" />
-                                  View details
-                                </DropdownMenuItem>
-                                <DropdownMenuItem onClick={() => handleEditRoom(room)}>
-                                  <Pencil className="mr-2 h-4 w-4" />
-                                  Edit
-                                </DropdownMenuItem>
-                                <DropdownMenuSeparator />
-                                <DropdownMenuItem
-                                  className="text-red-600 focus:text-red-700"
-                                  onClick={() => confirmDelete(room.id)}
-                                >
-                                  <Trash2 className="mr-2 h-4 w-4" />
-                                  Delete
-                                </DropdownMenuItem>
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-                          </div>
-                        </CardHeader>
-
-                        <CardContent className="space-y-3">
-                          <div className="flex flex-wrap gap-2 text-sm text-muted-foreground">
-                            <div className="inline-flex items-center gap-1.5">
-                              <Users className="h-4 w-4" />
-                              <span>{room.capacity} students</span>
-                            </div>
-                            <div className="inline-flex items-center gap-1.5">
-                              <MapPin className="h-4 w-4" />
-                              <span>{room.type}</span>
-                            </div>
-                          </div>
-
-                          {room.sections && room.sections.length > 0 ? (
-                            <div className="space-y-1.5">
-                              <div className="text-xs font-medium text-muted-foreground">
-                                Assigned Sections
+                            {room.sections && room.sections.length > 0 ? (
+                              <div className="space-y-1.5">
+                                <div className="text-xs font-medium text-muted-foreground">
+                                  Assigned Sections
+                                </div>
+                                <div className="flex flex-wrap gap-1">
+                                  {room.sections.map((s) => (
+                                    <Badge key={s.section_id} variant="secondary" className="px-2 py-0.5">
+                                      {s.section_name} • G{s.grade_level} {s.strand}
+                                    </Badge>
+                                  ))}
+                                </div>
                               </div>
-                              <div className="flex flex-wrap gap-1">
-                                {room.sections.map((s) => (
-                                  <Badge key={s.section_id} variant="secondary" className="px-2 py-0.5">
-                                    {s.section_name} • G{s.grade_level} {s.strand}
-                                  </Badge>
-                                ))}
+                            ) : isLab ? (
+                              <div className="text-sm text-muted-foreground border rounded-md px-3 py-2">
+                                Laboratory rooms cannot be assigned to sections.
                               </div>
-                            </div>
-                          ) : (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="w-full"
-                              onClick={() => handleAddSection(room)}
-                            >
-                              <UserPlus className="h-4 w-4 mr-2" />
-                              Add Section
-                            </Button>
-                          )}
-                        </CardContent>
-                      </Card>
-                    ))}
+                            ) : (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="w-full"
+                                onClick={() => handleAddSection(room)}
+                              >
+                                <UserPlus className="h-4 w-4 mr-2" />
+                                Add Section
+                              </Button>
+                            )}
+                          </CardContent>
+                        </Card>
+                      );
+                    })}
                   </div>
                 </CardContent>
               )}
@@ -576,7 +580,6 @@ const RoomManagement = () => {
         </div>
       )}
 
-      {/* Delete confirmation */}
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <AlertDialogContent className="max-w-[95vw] sm:max-w-md">
           <AlertDialogHeader>
@@ -594,7 +597,6 @@ const RoomManagement = () => {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Create / Edit Room */}
       <RoomForm
         open={isFormOpen}
         onOpenChange={(open) => {
@@ -605,7 +607,6 @@ const RoomManagement = () => {
         room={selectedRoom}
       />
 
-      {/* Assign Section */}
       <RoomSectionDialog
         open={sectionDialogOpen}
         onOpenChange={setSectionDialogOpen}
@@ -614,7 +615,6 @@ const RoomManagement = () => {
         onSectionAdded={fetchRooms}
       />
 
-      {/* View Room */}
       {isViewDialogOpen && selectedRoom && (
         <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>
           <DialogContent className="sm:max-w-[560px]">
