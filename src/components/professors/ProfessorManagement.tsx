@@ -561,20 +561,28 @@ const ProfessorManagement = () => {
       </div>
 
       {isAddDialogOpen && (
-        <ProfessorForm open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen} onSubmit={addProfessor} />
+        <ProfessorForm
+          open={isAddDialogOpen}
+          onOpenChange={setIsAddDialogOpen}
+          onSaved={fetchProfessors}  
+        />
       )}
 
       {isEditDialogOpen && selectedProfessor && (
         <ProfessorForm
           open={isEditDialogOpen}
           onOpenChange={setIsEditDialogOpen}
-          onSubmit={handleUpdateProfessor}
+          // ✅ tell the form which row to update
           initialData={{
+            prof_id: Number(selectedProfessor.id),   // <-- IMPORTANT
             name: selectedProfessor.name,
             email: selectedProfessor.email || "",
             phone: selectedProfessor.phone || "",
             qualifications: selectedProfessor.qualifications || [],
+            // If you also support subjects here, pass subject_ids too
           }}
+          // ✅ refresh the table after a successful save
+          onSaved={fetchProfessors}
         />
       )}
 
