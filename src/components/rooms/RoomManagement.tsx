@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import axios from "axios";
 import { Button } from "@/components/ui/button";
 import {
@@ -14,6 +14,10 @@ import {
   AlertTriangle,
   Eye,
   MoreVertical,
+  LayoutGrid,
+  List,
+  ArrowUpDown,
+  Building2,
 } from "lucide-react";
 import {
   Card,
@@ -58,18 +62,20 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
 
 /* ---------- Types ---------- */
 
 interface Room {
   id: number;
   number: number;
-  type: string;
+  type: "Lecture" | "Laboratory" | string;
   capacity: number;
   sections?: {
     section_id: number;
     section_name: string;
-    grade_level: string;
+    grade_level: string | number;
     strand: string;
   }[];
 }
@@ -86,7 +92,7 @@ interface Section {
   strand: string;
 }
 
-/* ---------- Assign Section Dialog ---------- */
+/* ---------- Assign Section Dialog (unchanged logic, slightly tidied UI) ---------- */
 
 interface RoomSectionDialogProps {
   open: boolean;
@@ -242,8 +248,10 @@ const RoomSectionDialog: React.FC<RoomSectionDialogProps> = ({
   );
 };
 
-
 /* ---------- Page ---------- */
+
+type ViewMode = "grid" | "list";
+type SortKey = "number" | "capacity" | "type";
 
 const RoomManagement = () => {
   const [rooms, setRooms] = useState<Room[]>([]);
@@ -258,6 +266,12 @@ const RoomManagement = () => {
   const [sectionDialogOpen, setSectionDialogOpen] = useState(false);
   const [selectedRoomForSection, setSelectedRoomForSection] = useState<Room | null>(null);
   const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
+
+  // New UI states
+  const [viewMode, setViewMode] = useState<ViewMode>("grid");
+  const [search, setSearch] = useState("");
+  const [sortKey, setSortKey] = useState<SortKey>("number");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
   const fetchRooms = async () => {
     setLoading(true);
@@ -287,6 +301,19 @@ const RoomManagement = () => {
       ? "bg-purple-50 text-purple-700 border-purple-200"
       : "bg-gray-50 text-gray-700 border-gray-200";
 
+  const sortRooms = (list: Room[]) => {
+    const dir = sortDir === "asc" ? 1 : -1;
+    return [...list].sort((a, b) => {
+      let va: any = a[sortKey];
+      let vb: any = b[sortKey];
+      if (typeof va === "string") va = va.toLowerCase();
+      if (typeof vb === "string") vb = vb.toLowerCase();
+      if (va < vb) return -1 * dir;
+      if (va > vb) return 1 * dir;
+      return 0;
+    });
+  };
+
   const groupRoomsByFloor = (all: Room[]): FloorGroup[] => {
     const map: Record<number, Room[]> = {};
     all.forEach((r) => {
@@ -295,18 +322,36 @@ const RoomManagement = () => {
       map[floor].push(r);
     });
     return Object.entries(map)
-      .map(([floor, rs]) => ({ floor: Number(floor), rooms: rs.sort((a, b) => a.number - b.number) }))
+      .map(([floor, rs]) => ({ floor: Number(floor), rooms: sortRooms(rs) }))
       .sort((a, b) => a.floor - b.floor);
   };
 
   const getUniqueFloors = (all: Room[]): number[] =>
     Array.from(new Set(all.map((r) => Math.floor(r.number / 100)))).sort((a, b) => a - b);
 
-  const getFilteredRooms = (all: Room[]) => {
-    if (selectedFloor === "all") return all;
-    const fl = Number(selectedFloor);
-    return all.filter((r) => Math.floor(r.number / 100) === fl);
-  };
+  const filtered = useMemo(() => {
+    const byFloor =
+      selectedFloor === "all"
+        ? rooms
+        : rooms.filter((r) => Math.floor(r.number / 100) === Number(selectedFloor));
+
+    const bySearch = search.trim()
+      ? byFloor.filter((r) => {
+          const s = search.toLowerCase();
+          return (
+            String(r.number).includes(search) ||
+            r.type.toLowerCase().includes(s) ||
+            r.sections?.some((x) =>
+              `${x.section_name} ${x.strand} ${x.grade_level}`.toLowerCase().includes(s)
+            )
+          );
+        })
+      : byFloor;
+
+    return sortRooms(bySearch);
+  }, [rooms, selectedFloor, search, sortKey, sortDir]);
+
+  const grouped = useMemo(() => groupRoomsByFloor(filtered), [filtered]);
 
   const formatOrdinal = (n: number) => {
     const j = n % 10, k = n % 100;
@@ -398,188 +443,231 @@ const RoomManagement = () => {
     fetchRoomDetails(room.id);
   };
 
+  // Quick stats
+  const stats = useMemo(() => {
+    const total = rooms.length;
+    const lecture = rooms.filter((r) => r.type === "Lecture").length;
+    const lab = rooms.filter((r) => r.type === "Laboratory").length;
+    const capacity = rooms.reduce((acc, r) => acc + (Number(r.capacity) || 0), 0);
+    return { total, lecture, lab, capacity };
+  }, [rooms]);
+
   return (
     <div className="container mx-auto py-6 px-4 sm:px-6">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between mb-6">
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-semibold">Room Management</h1>
-          <p className="text-sm text-muted-foreground">Organize rooms and their assigned sections.</p>
-        </div>
-        <div className="flex gap-2">
-          <Select value={selectedFloor} onValueChange={setSelectedFloor}>
-            <SelectTrigger className="w-[180px]">
-              <SelectValue placeholder="Filter by floor" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Floors</SelectItem>
-              {getUniqueFloors(rooms).map((f) => (
-                <SelectItem key={f} value={String(f)}>{formatOrdinal(f)} Floor</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Button variant="outline" onClick={fetchRooms}>
-            <RefreshCw className="mr-2 h-4 w-4" />
-            Refresh
-          </Button>
-          <Button onClick={() => setIsFormOpen(true)}>
-            <Plus className="mr-2 h-4 w-4" />
-            New Room
-          </Button>
+      {/* Sticky Toolbar */}
+      <div className="sticky top-0 z-20 bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-b">
+        <div className="py-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div className="flex items-center gap-3">
+            <Building2 className="h-6 w-6 text-primary" />
+            <div>
+              <h1 className="text-xl sm:text-2xl font-semibold">Room Management</h1>
+              <p className="text-xs sm:text-sm text-muted-foreground">
+                Organize rooms and their assigned sections.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-2 items-center">
+            <div className="w-full sm:w-64">
+              <Input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search room number, type, or section…"
+              />
+            </div>
+
+            <Select value={selectedFloor} onValueChange={setSelectedFloor}>
+              <SelectTrigger className="w-[150px]">
+                <SelectValue placeholder="Floor" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Floors</SelectItem>
+                {getUniqueFloors(rooms).map((f) => (
+                  <SelectItem key={f} value={String(f)}>{formatOrdinal(f)} Floor</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            <Select value={sortKey} onValueChange={(v: SortKey) => setSortKey(v)}>
+              <SelectTrigger className="w-[140px]">
+                <SelectValue placeholder="Sort by" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="number">Room #</SelectItem>
+                <SelectItem value="capacity">Capacity</SelectItem>
+                <SelectItem value="type">Type</SelectItem>
+              </SelectContent>
+            </Select>
+
+            <Button
+              variant="outline"
+              onClick={() => setSortDir((d) => (d === "asc" ? "desc" : "asc"))}
+              title="Toggle sort direction"
+            >
+              <ArrowUpDown className="mr-2 h-4 w-4" />
+              {sortDir.toUpperCase()}
+            </Button>
+
+            <Button variant="outline" onClick={fetchRooms}>
+              <RefreshCw className="mr-2 h-4 w-4" />
+              Refresh
+            </Button>
+
+            <div className="hidden sm:flex rounded-lg border overflow-hidden">
+              <Button
+                variant={viewMode === "grid" ? "default" : "ghost"}
+                className="rounded-none"
+                onClick={() => setViewMode("grid")}
+              >
+                <LayoutGrid className="h-4 w-4" />
+              </Button>
+              <Button
+                variant={viewMode === "list" ? "default" : "ghost"}
+                className="rounded-none"
+                onClick={() => setViewMode("list")}
+              >
+                <List className="h-4 w-4" />
+              </Button>
+            </div>
+
+            <Button onClick={() => setIsFormOpen(true)}>
+              <Plus className="mr-2 h-4 w-4" />
+              New Room
+            </Button>
+          </div>
         </div>
       </div>
 
-      {loading ? (
-        <div className="flex justify-center items-center h-64">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary" />
-        </div>
-      ) : error ? (
-        <Card className="bg-destructive/10 border-destructive">
-          <CardHeader>
-            <CardTitle>Error</CardTitle>
-            <CardDescription>{error}</CardDescription>
-          </CardHeader>
-        </Card>
-      ) : getFilteredRooms(rooms).length === 0 ? (
-        <Card className="text-center p-8">
-          <CardHeader>
-            <CardTitle>No Rooms Found</CardTitle>
-            <CardDescription>
-              {selectedFloor !== "all"
-                ? "No rooms on the selected floor."
-                : "Create a room to get started."}
-            </CardDescription>
-          </CardHeader>
-          <CardFooter className="justify-center">
-            <Button onClick={() => setIsFormOpen(true)}>
-              <Plus className="mr-2 h-4 w-4" />
-              Create Room
-            </Button>
-          </CardFooter>
-        </Card>
-      ) : (
-        <div className="space-y-6">
-          {groupRoomsByFloor(getFilteredRooms(rooms)).map((grp) => (
-            <Card key={grp.floor} className="overflow-hidden border">
-              <div className="sticky top-0 z-10 bg-muted/40">
-                <CardHeader className="py-3">
-                  <button
-                    className="w-full flex items-center justify-between text-left"
-                    onClick={() => toggleFloor(grp.floor)}
-                  >
-                    <div className="flex items-center gap-3">
-                      {expandedFloors.has(grp.floor) ? (
-                        <ChevronDown className="h-5 w-5 text-primary" />
-                      ) : (
-                        <ChevronRight className="h-5 w-5 text-primary" />
-                      )}
-                      <div>
-                        <CardTitle className="text-lg">{formatOrdinal(grp.floor)} Floor</CardTitle>
-                        <CardDescription className="text-xs">
-                          {grp.rooms.length} {grp.rooms.length === 1 ? "Room" : "Rooms"}
-                        </CardDescription>
+      {/* Stats Strip */}
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <StatCard label="Total Rooms" value={stats.total} />
+        <StatCard label="Lecture Rooms" value={stats.lecture} />
+        <StatCard label="Laboratories" value={stats.lab} />
+        <StatCard label="Total Capacity" value={stats.capacity.toLocaleString()} />
+      </div>
+
+      {/* Body */}
+      <div className="mt-6">
+        {loading ? (
+          <SkeletonList />
+        ) : error ? (
+          <Card className="bg-destructive/10 border-destructive">
+            <CardHeader>
+              <CardTitle>Error</CardTitle>
+              <CardDescription>{error}</CardDescription>
+            </CardHeader>
+          </Card>
+        ) : filtered.length === 0 ? (
+          <Card className="text-center p-10">
+            <CardHeader>
+              <CardTitle>No Rooms Found</CardTitle>
+              <CardDescription>
+                {search
+                  ? "Try clearing your search or filters."
+                  : selectedFloor !== "all"
+                  ? "No rooms on the selected floor."
+                  : "Create a room to get started."}
+              </CardDescription>
+            </CardHeader>
+            <CardFooter className="justify-center">
+              <Button onClick={() => setIsFormOpen(true)}>
+                <Plus className="mr-2 h-4 w-4" />
+                Create Room
+              </Button>
+            </CardFooter>
+          </Card>
+        ) : (
+          <div className="space-y-6">
+            {grouped.map((grp) => (
+              <Card key={grp.floor} className="overflow-hidden border">
+                <div className="sticky top-[64px] sm:top-[70px] z-10 bg-muted/40">
+                  <CardHeader className="py-3">
+                    <button
+                      className="w-full flex items-center justify-between text-left"
+                      onClick={() => toggleFloor(grp.floor)}
+                    >
+                      <div className="flex items-center gap-3">
+                        {expandedFloors.has(grp.floor) ? (
+                          <ChevronDown className="h-5 w-5 text-primary" />
+                        ) : (
+                          <ChevronRight className="h-5 w-5 text-primary" />
+                        )}
+                        <div>
+                          <CardTitle className="text-lg">{formatOrdinal(grp.floor)} Floor</CardTitle>
+                          <CardDescription className="text-xs">
+                            {grp.rooms.length} {grp.rooms.length === 1 ? "Room" : "Rooms"}
+                          </CardDescription>
+                        </div>
                       </div>
-                    </div>
-                    <Badge variant="outline">{grp.rooms.length}</Badge>
-                  </button>
-                </CardHeader>
-              </div>
+                      <div className="flex items-center gap-2">
+                        <Badge variant="outline">{grp.rooms.length}</Badge>
+                        <div className="flex rounded-md border overflow-hidden">
+                          <Button
+                            variant={viewMode === "grid" ? "default" : "ghost"}
+                            className="h-8 rounded-none"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setViewMode("grid");
+                            }}
+                          >
+                            <LayoutGrid className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant={viewMode === "list" ? "default" : "ghost"}
+                            className="h-8 rounded-none"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setViewMode("list");
+                            }}
+                          >
+                            <List className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    </button>
+                  </CardHeader>
+                </div>
 
-              {expandedFloors.has(grp.floor) && (
-                <CardContent className="pt-4">
-                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                    {grp.rooms.map((room) => {
-                      const isLab = room.type?.toLowerCase() === "laboratory";
-                      return (
-                        <Card key={room.id} className="hover:shadow-sm transition-shadow">
-                          <CardHeader className="pb-2">
-                            <div className="flex items-start justify-between gap-2">
-                              <div className="min-w-0">
-                                <CardTitle className="text-base truncate">Room {room.number}</CardTitle>
-                                <div className="mt-1">
-                                  <Badge className={getRoomTypeBadge(room.type)}>{room.type}</Badge>
-                                </div>
-                              </div>
+                {expandedFloors.has(grp.floor) && (
+                  <CardContent className="pt-4">
+                    {viewMode === "grid" ? (
+                      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                        {grp.rooms.map((room) => (
+                          <RoomCard
+                            key={room.id}
+                            room={room}
+                            getRoomTypeBadge={getRoomTypeBadge}
+                            openViewDialog={openViewDialog}
+                            handleEditRoom={handleEditRoom}
+                            confirmDelete={confirmDelete}
+                            handleAddSection={handleAddSection}
+                          />
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="divide-y rounded-md border">
+                        {grp.rooms.map((room) => (
+                          <RoomRow
+                            key={room.id}
+                            room={room}
+                            getRoomTypeBadge={getRoomTypeBadge}
+                            openViewDialog={openViewDialog}
+                            handleEditRoom={handleEditRoom}
+                            confirmDelete={confirmDelete}
+                            handleAddSection={handleAddSection}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </CardContent>
+                )}
+              </Card>
+            ))}
+          </div>
+        )}
+      </div>
 
-                              <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                  <Button variant="ghost" size="icon" className="h-8 w-8">
-                                    <MoreVertical className="h-4 w-4" />
-                                  </Button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent align="end" className="w-40">
-                                  <DropdownMenuItem onClick={() => openViewDialog(room)}>
-                                    <Eye className="mr-2 h-4 w-4" />
-                                    View details
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem onClick={() => handleEditRoom(room)}>
-                                    <Pencil className="mr-2 h-4 w-4" />
-                                    Edit
-                                  </DropdownMenuItem>
-                                  <DropdownMenuSeparator />
-                                  <DropdownMenuItem
-                                    className="text-red-600 focus:text-red-700"
-                                    onClick={() => confirmDelete(room.id)}
-                                  >
-                                    <Trash2 className="mr-2 h-4 w-4" />
-                                    Delete
-                                  </DropdownMenuItem>
-                                </DropdownMenuContent>
-                              </DropdownMenu>
-                            </div>
-                          </CardHeader>
-
-                          <CardContent className="space-y-3">
-                            <div className="flex flex-wrap gap-2 text-sm text-muted-foreground">
-                              <div className="inline-flex items-center gap-1.5">
-                                <Users className="h-4 w-4" />
-                                <span>{room.capacity} students</span>
-                              </div>
-                              <div className="inline-flex items-center gap-1.5">
-                                <MapPin className="h-4 w-4" />
-                                <span>{room.type}</span>
-                              </div>
-                            </div>
-
-                            {room.sections && room.sections.length > 0 ? (
-                              <div className="space-y-1.5">
-                                <div className="text-xs font-medium text-muted-foreground">
-                                  Assigned Sections
-                                </div>
-                                <div className="flex flex-wrap gap-1">
-                                  {room.sections.map((s) => (
-                                    <Badge key={s.section_id} variant="secondary" className="px-2 py-0.5">
-                                      {s.section_name} • G{s.grade_level} {s.strand}
-                                    </Badge>
-                                  ))}
-                                </div>
-                              </div>
-                            ) : isLab ? (
-                              <div className="text-sm text-muted-foreground border rounded-md px-3 py-2">
-                                Laboratory rooms cannot be assigned to sections.
-                              </div>
-                            ) : (
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                className="w-full"
-                                onClick={() => handleAddSection(room)}
-                              >
-                                <UserPlus className="h-4 w-4 mr-2" />
-                                Add Section
-                              </Button>
-                            )}
-                          </CardContent>
-                        </Card>
-                      );
-                    })}
-                  </div>
-                </CardContent>
-              )}
-            </Card>
-          ))}
-        </div>
-      )}
-
+      {/* Delete dialog */}
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <AlertDialogContent className="max-w-[95vw] sm:max-w-md">
           <AlertDialogHeader>
@@ -597,6 +685,7 @@ const RoomManagement = () => {
         </AlertDialogContent>
       </AlertDialog>
 
+      {/* Forms / dialogs */}
       <RoomForm
         open={isFormOpen}
         onOpenChange={(open) => {
@@ -650,5 +739,206 @@ const RoomManagement = () => {
     </div>
   );
 };
+
+/* ---------- Small presentational components ---------- */
+
+const StatCard = ({ label, value }: { label: string; value: string | number }) => (
+  <Card className="shadow-none">
+    <CardHeader className="pb-2">
+      <CardDescription>{label}</CardDescription>
+      <CardTitle className="text-2xl">{value}</CardTitle>
+    </CardHeader>
+  </Card>
+);
+
+const RoomCard = ({
+  room,
+  getRoomTypeBadge,
+  openViewDialog,
+  handleEditRoom,
+  confirmDelete,
+  handleAddSection,
+}: {
+  room: Room;
+  getRoomTypeBadge: (t: string) => string;
+  openViewDialog: (r: Room) => void;
+  handleEditRoom: (r: Room) => void;
+  confirmDelete: (id: number) => void;
+  handleAddSection: (r: Room) => void;
+}) => {
+  const isLab = room.type?.toLowerCase() === "laboratory";
+  return (
+    <Card className="hover:shadow-sm transition-shadow">
+      <CardHeader className="pb-2">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <CardTitle className="text-base truncate">Room {room.number}</CardTitle>
+            <div className="mt-1">
+              <Badge className={getRoomTypeBadge(room.type)}>{room.type}</Badge>
+            </div>
+          </div>
+
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon" className="h-8 w-8">
+                <MoreVertical className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-40">
+              <DropdownMenuItem onClick={() => openViewDialog(room)}>
+                <Eye className="mr-2 h-4 w-4" />
+                View details
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => handleEditRoom(room)}>
+                <Pencil className="mr-2 h-4 w-4" />
+                Edit
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                className="text-red-600 focus:text-red-700"
+                onClick={() => confirmDelete(room.id)}
+              >
+                <Trash2 className="mr-2 h-4 w-4" />
+                Delete
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </CardHeader>
+
+      <CardContent className="space-y-3">
+        <div className="flex flex-wrap gap-2 text-sm text-muted-foreground">
+          <div className="inline-flex items-center gap-1.5">
+            <Users className="h-4 w-4" />
+            <span>{room.capacity} students</span>
+          </div>
+          <div className="inline-flex items-center gap-1.5">
+            <MapPin className="h-4 w-4" />
+            <span>{room.type}</span>
+          </div>
+        </div>
+
+        {room.sections && room.sections.length > 0 ? (
+          <div className="space-y-1.5">
+            <div className="text-xs font-medium text-muted-foreground">Assigned Sections</div>
+            <div className="flex flex-wrap gap-1">
+              {room.sections.map((s) => (
+                <Badge key={s.section_id} variant="secondary" className="px-2 py-0.5">
+                  {s.section_name} • G{s.grade_level} {s.strand}
+                </Badge>
+              ))}
+            </div>
+          </div>
+        ) : isLab ? (
+          <div className="text-sm text-muted-foreground border rounded-md px-3 py-2">
+            Laboratory rooms cannot be assigned to sections.
+          </div>
+        ) : (
+          <Button variant="outline" size="sm" className="w-full" onClick={() => handleAddSection(room)}>
+            <UserPlus className="h-4 w-4 mr-2" />
+            Add Section
+          </Button>
+        )}
+      </CardContent>
+    </Card>
+  );
+};
+
+const RoomRow = ({
+  room,
+  getRoomTypeBadge,
+  openViewDialog,
+  handleEditRoom,
+  confirmDelete,
+  handleAddSection,
+}: {
+  room: Room;
+  getRoomTypeBadge: (t: string) => string;
+  openViewDialog: (r: Room) => void;
+  handleEditRoom: (r: Room) => void;
+  confirmDelete: (id: number) => void;
+  handleAddSection: (r: Room) => void;
+}) => {
+  const isLab = room.type?.toLowerCase() === "laboratory";
+  return (
+    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-3">
+      <div className="flex items-center gap-4 min-w-0">
+        <div className="shrink-0 rounded-md border px-3 py-2 text-sm font-semibold">
+          {room.number}
+        </div>
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="font-medium truncate">Room {room.number}</span>
+            <Badge className={getRoomTypeBadge(room.type)}>{room.type}</Badge>
+          </div>
+          <div className="mt-1 flex flex-wrap gap-3 text-xs text-muted-foreground">
+            <span className="inline-flex items-center gap-1.5">
+              <Users className="h-3.5 w-3.5" />
+              {room.capacity} students
+            </span>
+            {room.sections && room.sections.length > 0 && (
+              <span className="inline-flex items-center gap-1.5">
+                <MapPin className="h-3.5 w-3.5" />
+                {room.sections.length} section(s)
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="flex gap-2">
+        <Button variant="outline" size="sm" onClick={() => openViewDialog(room)}>
+          <Eye className="mr-2 h-4 w-4" /> View
+        </Button>
+        <Button variant="outline" size="sm" onClick={() => handleEditRoom(room)}>
+          <Pencil className="mr-2 h-4 w-4" /> Edit
+        </Button>
+        {isLab ? (
+          <Button variant="outline" size="sm" disabled title="Laboratory rooms cannot be assigned">
+            <UserPlus className="mr-2 h-4 w-4" /> Add Section
+          </Button>
+        ) : (
+          <Button variant="outline" size="sm" onClick={() => handleAddSection(room)}>
+            <UserPlus className="mr-2 h-4 w-4" /> Add Section
+          </Button>
+        )}
+        <Button variant="destructive" size="sm" onClick={() => confirmDelete(room.id)}>
+          <Trash2 className="mr-2 h-4 w-4" /> Delete
+        </Button>
+      </div>
+    </div>
+  );
+};
+
+const SkeletonList = () => (
+  <div className="space-y-6">
+    {[1, 2].map((i) => (
+      <Card key={i}>
+        <CardHeader className="py-3">
+          <div className="flex items-center gap-3">
+            <Skeleton className="h-5 w-5 rounded-full" />
+            <div className="space-y-1">
+              <Skeleton className="h-4 w-24" />
+              <Skeleton className="h-3 w-32" />
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {Array.from({ length: 6 }).map((_, idx) => (
+              <Card key={idx} className="p-4">
+                <div className="space-y-3">
+                  <Skeleton className="h-4 w-3/5" />
+                  <Skeleton className="h-3 w-2/5" />
+                  <Skeleton className="h-3 w-4/5" />
+                </div>
+              </Card>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+    ))}
+  </div>
+);
 
 export default RoomManagement;
