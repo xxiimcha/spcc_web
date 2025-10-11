@@ -1,3 +1,4 @@
+// ...imports stay the same
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -26,18 +27,14 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import axios from "axios";
 
-/** Absolute backend endpoints */
 const ABS_SUBJECTS_URL = "http://localhost/spcc_database/subjects.php";
 const ABS_PROFESSORS_URL = "http://localhost/spcc_database/professors.php";
 
-/** Utility validators */
 const optionalNonEmpty = (schema: z.ZodTypeAny) =>
   z.union([schema, z.literal("").transform(() => undefined)]);
 
-/** PH-friendly phone: allows +63 or 09… and digits/spaces/dashes */
 const phoneRegex = /^(?:\+?63|0)?(?:\d[\s-]?){9,12}\d$/;
 
-/** Zod schema */
 const formSchema = z.object({
   name: z.string().min(2, { message: "Name must be at least 2 characters" }),
   username: z
@@ -45,7 +42,7 @@ const formSchema = z.object({
     .min(4, { message: "Username must be at least 4 characters" })
     .regex(/^[a-z0-9._-]+$/, { message: "Use lowercase letters, numbers, dot, underscore, or dash" }),
   password: z.string().min(6, { message: "Password must be at least 6 characters" }),
-  email: optionalNonEmpty(z.string().email({ message: "Please enter a valid email address" })),
+  email: z.string().trim().min(1, { message: "Email is required" }).email({ message: "Please enter a valid email address" }),
   phone: optionalNonEmpty(z.string().regex(phoneRegex, { message: "Please enter a valid phone number" })),
   qualifications: z.array(z.string()).min(1, { message: "Add at least one specialization" }),
   subject_ids: z.array(z.number()).nonempty({ message: "Assign at least one subject" }),
@@ -54,9 +51,7 @@ const formSchema = z.object({
 interface ProfessorFormProps {
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
-  /** Optional: if provided, we'll call this after the network write succeeds */
   onSaved?: () => void;
-  /** For edit mode, pass existing values + optional prof_id */
   initialData?: Partial<z.infer<typeof formSchema>> & { prof_id?: number };
 }
 
@@ -65,9 +60,10 @@ interface Subject {
   code: string;
   name: string;
   description?: string;
+  strand?: string;              // ← NEW
+  grade_level?: string | number; // (optional, if you decide to show/use later)
 }
 
-/** Order-agnostic numerical array compare */
 const arraysEqualUnordered = (a: number[] = [], b: number[] = []) => {
   if (a.length !== b.length) return false;
   const sa = [...a].sort((x, y) => x - y);
@@ -84,41 +80,30 @@ const normalizeSubjectsResponse = (raw: any): Subject[] => {
       code: String(s.subj_code ?? s.code ?? "").trim(),
       name: String(s.subj_name ?? s.name ?? "").trim(),
       description: (s.subj_description ?? s.description ?? "")?.toString()?.trim() || undefined,
+      strand: (s.strand ?? s.track ?? s.strand_code ?? "")?.toString()?.trim() || undefined, // ← NEW
+      grade_level: s.grade_level ?? s.grade ?? s.year_level, // (optional)
     }))
     .filter((s: Subject) => s.id > 0 && (s.code || s.name));
 };
 
-/** Username generator helpers */
 const latinize = (str: string) =>
-  str
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase();
+  str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 
 const makeUsername = (name: string) => {
   const clean = latinize(name).replace(/[^a-z\s-]/g, " ").trim();
   if (!clean) return `user${Math.floor(Math.random() * 10000)}`;
   const parts = clean.split(/\s+/);
   const base = `${parts[0]}${parts[1]?.charAt(0) ?? ""}`;
-  const suffix = Math.floor(Math.random() * 1000)
-    .toString()
-    .padStart(3, "0");
+  const suffix = Math.floor(Math.random() * 1000).toString().padStart(3, "0");
   return (base || "user") + suffix;
 };
 
-/** Stronger password with 12 chars */
 const makePassword = (len = 12) => {
-  const sets = [
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
-    "abcdefghijklmnopqrstuvwxyz",
-    "0123456789",
-  ];
-  // ensure at least one from each
+  const sets = ["ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz", "0123456789"];
   const required = sets.map((s) => s[Math.floor(Math.random() * s.length)]);
   const all = sets.join("");
   const remain = Array.from({ length: Math.max(0, len - required.length) }, () => all[Math.floor(Math.random() * all.length)]);
   const raw = [...required, ...remain];
-  // shuffle
   for (let i = raw.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [raw[i], raw[j]] = [raw[j], raw[i]];
@@ -158,6 +143,13 @@ const ProfessorForm = ({
     (initialData.subject_ids as number[]) || []
   );
 
+  // Existing search controls
+  const [subjectSearch, setSubjectSearch] = useState("");
+  const [subjectFilterKey, setSubjectFilterKey] = useState<"all" | "code" | "name">("all");
+
+  // NEW: strand filter
+  const [subjectStrandFilter, setSubjectStrandFilter] = useState<string>("ALL");
+
   const abortRef = useRef<AbortController | null>(null);
 
   const form = useForm<z.infer<typeof formSchema>>({
@@ -170,7 +162,6 @@ const ProfessorForm = ({
     mode: "onSubmit",
   });
 
-  /** Load subjects */
   const loadSubjects = async () => {
     try {
       abortRef.current?.abort();
@@ -203,7 +194,6 @@ const ProfessorForm = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /** Keep subject_ids in sync when editing */
   useEffect(() => {
     const incoming = ((initialData.subject_ids as number[]) || []).map(Number);
     if (!arraysEqualUnordered(incoming, selectedSubjectIds)) {
@@ -227,6 +217,9 @@ const ProfessorForm = ({
     setNewQualification("");
     setShowPassword(false);
     setSelectedSubjectIds([]);
+    setSubjectSearch("");
+    setSubjectFilterKey("all");
+    setSubjectStrandFilter("ALL"); // reset strand filter
   };
 
   const handleGenerateUsername = () => {
@@ -284,7 +277,6 @@ const ProfessorForm = ({
     form.setValue("subject_ids", next, { shouldValidate: true });
   };
 
-  /** Simple dirty check for edit mode to avoid no-op submit */
   const isEdit = Boolean(initialData.prof_id);
   const isNoChange = useMemo(() => {
     if (!isEdit) return false;
@@ -305,7 +297,35 @@ const ProfessorForm = ({
     return baseSame && qualsSame && subjectsSame;
   }, [form.watch(), initialData, isEdit]);
 
-  /** Create/Update submit wired to PHP directly */
+  // Unique strands (uppercased, sorted)
+  const availableStrands = useMemo(() => {
+    const set = new Set<string>();
+    subjects.forEach((s) => {
+      const st = (s.strand || "").toString().trim();
+      if (st) set.add(st.toUpperCase());
+    });
+    return Array.from(set).sort();
+  }, [subjects]);
+
+  // Apply search + filter type + strand filter
+  const visibleSubjects = useMemo(() => {
+    const q = subjectSearch.trim().toLowerCase();
+    const filteredByQuery = !q
+      ? subjects
+      : subjects.filter((s) => {
+          const code = (s.code || "").toLowerCase();
+          const name = (s.name || "").toLowerCase();
+          if (subjectFilterKey === "code") return code.includes(q);
+          if (subjectFilterKey === "name") return name.includes(q);
+          return code.includes(q) || name.includes(q);
+        });
+
+    if (subjectStrandFilter === "ALL") return filteredByQuery;
+    return filteredByQuery.filter(
+      (s) => (s.strand || "").toUpperCase() === subjectStrandFilter
+    );
+  }, [subjects, subjectSearch, subjectFilterKey, subjectStrandFilter]);
+
   const handleSubmit = async (data: z.infer<typeof formSchema>) => {
     try {
       setIsSubmitting(true);
@@ -314,7 +334,7 @@ const ProfessorForm = ({
         name: data.name.trim(),
         username: data.username.trim(),
         password: data.password,
-        email: data.email || "",
+        email: data.email.trim(),
         phone: data.phone || "",
         qualifications: qualifications.map((q) => q.trim()).filter(Boolean),
         subject_ids: selectedSubjectIds.map(Number),
@@ -323,10 +343,8 @@ const ProfessorForm = ({
       let res;
       if (isEdit) {
         const url = `${ABS_PROFESSORS_URL}?id=${initialData.prof_id}`;
-        // PUT /professors.php?id={prof_id}
         res = await axios.put(url, payload, { timeout: 20000 });
       } else {
-        // POST /professors.php
         res = await axios.post(ABS_PROFESSORS_URL, payload, { timeout: 20000 });
       }
 
@@ -374,7 +392,7 @@ const ProfessorForm = ({
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="sm:max-w-[720px] bg-white">
+        <DialogContent className="sm:max-w-[900px] bg-white">
           <DialogHeader>
             <DialogTitle className="text-xl font-bold">
               {initialData.name ? "Edit Professor" : "Add New Professor"}
@@ -405,6 +423,7 @@ const ProfessorForm = ({
                   </Button>
                 </div>
 
+                {/* name, username, password, email, phone blocks unchanged */}
                 <FormField
                   control={form.control}
                   name="name"
@@ -417,7 +436,6 @@ const ProfessorForm = ({
                           {...field}
                           onBlur={(e) => {
                             field.onBlur?.(e);
-                            // if username empty, suggest one from name
                             const uname = form.getValues("username");
                             if (!uname) handleGenerateUsername();
                           }}
@@ -499,7 +517,7 @@ const ProfessorForm = ({
                   name="email"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Email (Optional)</FormLabel>
+                      <FormLabel>Email</FormLabel>
                       <FormControl>
                         <Input placeholder="john.doe@example.com" {...field} />
                       </FormControl>
@@ -523,7 +541,7 @@ const ProfessorForm = ({
                 />
               </div>
 
-              {/* Qualifications */}
+              {/* Qualifications (unchanged) */}
               <div className="space-y-4">
                 <FormField
                   control={form.control}
@@ -606,16 +624,71 @@ const ProfessorForm = ({
                       </div>
                     </FormLabel>
 
-                    <div className="border rounded-lg p-3 max-h-56 overflow-auto">
+                    {/* Search + filter type + STRAND filter */}
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between mb-2">
+                      <div className="flex flex-wrap gap-2 items-center">
+                        <Input
+                          placeholder="Search subjects…"
+                          value={subjectSearch}
+                          onChange={(e) => setSubjectSearch(e.target.value)}
+                          className="w-full sm:w-[260px]"
+                        />
+                        <select
+                          className="border rounded-md px-2 py-2 text-sm"
+                          value={subjectFilterKey}
+                          onChange={(e) => setSubjectFilterKey(e.target.value as any)}
+                          title="Filter field"
+                        >
+                          <option value="all">All fields</option>
+                          <option value="code">Subject Code</option>
+                          <option value="name">Subject Name</option>
+                        </select>
+
+                        {/* NEW Strand selector */}
+                        <select
+                          className="border rounded-md px-2 py-2 text-sm"
+                          value={subjectStrandFilter}
+                          onChange={(e) => setSubjectStrandFilter(e.target.value)}
+                          title="Filter by Strand"
+                        >
+                          <option value="ALL">All Strands</option>
+                          {availableStrands.map((st) => (
+                            <option key={st} value={st}>
+                              {st}
+                            </option>
+                          ))}
+                        </select>
+
+                        {(subjectSearch || subjectStrandFilter !== "ALL") && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              setSubjectSearch("");
+                              setSubjectStrandFilter("ALL");
+                            }}
+                          >
+                            Clear
+                          </Button>
+                        )}
+                      </div>
+
+                      <div className="text-xs text-muted-foreground">
+                        {subjectsLoading ? "Loading…" : `${visibleSubjects.length} / ${subjects.length} subjects`}
+                      </div>
+                    </div>
+
+                    <div className="border rounded-lg p-3 max-h-64 overflow-auto bg-white">
                       {subjectsLoading ? (
                         <p className="text-sm text-muted-foreground">Loading subjects…</p>
                       ) : subjectsError ? (
                         <p className="text-sm text-destructive">{subjectsError}</p>
-                      ) : subjects.length === 0 ? (
-                        <p className="text-sm text-muted-foreground">No subjects found.</p>
+                      ) : visibleSubjects.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">No subjects match your filters.</p>
                       ) : (
                         <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                          {subjects.map((s) => {
+                          {visibleSubjects.map((s) => {
                             const checked = selectedSubjectIds.includes(s.id);
                             return (
                               <li key={s.id} className="flex items-center gap-2">
@@ -629,6 +702,7 @@ const ProfessorForm = ({
                                   className="text-sm leading-none cursor-pointer select-none"
                                 >
                                   <span className="font-medium">{s.code || "SUBJ"}</span> - {s.name}
+                                  {s.strand ? <span className="text-xs text-muted-foreground"> &nbsp;({s.strand.toUpperCase()})</span> : null}
                                 </label>
                               </li>
                             );
@@ -661,16 +735,8 @@ const ProfessorForm = ({
         </DialogContent>
       </Dialog>
 
-      <SuccessMessage
-        isOpen={isSuccessDialogOpen}
-        onClose={handleSuccessDialogClose}
-        message={successMessage}
-      />
-      <ErrorMessage
-        isOpen={isErrorDialogOpen}
-        onClose={() => setIsErrorDialogOpen(false)}
-        message={errorMessage}
-      />
+      <SuccessMessage isOpen={isSuccessDialogOpen} onClose={handleSuccessDialogClose} message={successMessage} />
+      <ErrorMessage isOpen={isErrorDialogOpen} onClose={() => setIsErrorDialogOpen(false)} message={errorMessage} />
     </>
   );
 };

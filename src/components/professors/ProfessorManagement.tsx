@@ -869,7 +869,17 @@ const ProfessorManagement = () => {
       </div>
 
       {isAddDialogOpen && (
-        <ProfessorForm open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen} onSaved={fetchProfessors} />
+        <ProfessorForm
+          open={isAddDialogOpen}
+          onOpenChange={setIsAddDialogOpen}
+          onSaved={async () => {
+            setIsAddDialogOpen(false);
+            // 2) refresh data
+            await fetchProfessors();
+            setSuccessMessage(`Professor added successfully!`);
+            setIsSuccessDialogOpen(true);
+          }}
+        />
       )}
 
       {isEditDialogOpen && selectedProfessor && (
@@ -888,7 +898,13 @@ const ProfessorManagement = () => {
             username: selectedProfessor.username ?? "",
             subject_ids: (selectedProfessor.subject_ids ?? []).map(Number),
           }}
-          onSaved={fetchProfessors}
+          onSaved={async () => {
+            setIsEditDialogOpen(false);
+            setSelectedProfessor(null);
+            await fetchProfessors();
+            setSuccessMessage(`Professor updated successfully!`);
+            setIsSuccessDialogOpen(true);
+          }}
         />
       )}
 
