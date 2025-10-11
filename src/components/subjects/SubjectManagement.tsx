@@ -10,6 +10,7 @@ import {
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
+  ArrowUpDown, // NEW: sort indicator
 } from "lucide-react";
 import { apiService } from "@/services/apiService";
 import {
@@ -50,6 +51,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
+// NEW: shadcn Tabs for course/strand tabs
+import {
+  Tabs,
+  TabsList,
+  TabsTrigger,
+  TabsContent,
+} from "@/components/ui/tabs";
+
 interface Subject {
   id: string;
   code: string;
@@ -58,9 +67,8 @@ interface Subject {
   units?: number;
   type?: string;          // e.g., "Core", "Applied", etc.
   hoursPerWeek?: number;
-  // NEW:
   gradeLevel?: string;    // e.g., "11", "12"
-  strand?: string;        // e.g., "ICT", "STEM"
+  strand?: string;        // used as "course" tabs here
   schedule_count?: number;
 }
 
@@ -77,16 +85,18 @@ interface AssignedProfessor extends Professor {
   scheduleInfo?: string;
 }
 
-const API_URL = "http://localhost/spcc_database/subjects.php";
-const ASSIGNMENT_API_URL = "http://localhost/spcc_database/get_subject_professors.php";
-
 const PAGE_SIZES = [10, 25, 50];
 
-const ALL_VALUES = {
-  strand: "__ALL_STRAND__",
-  type: "__ALL_TYPE__",
-  grade: "__ALL_GRADE__",
-} as const;
+// NEW: type for sortable keys
+type SortKey =
+  | "code"
+  | "name"
+  | "strand"
+  | "gradeLevel"
+  | "type"
+  | "units"
+  | "hoursPerWeek"
+  | "schedule_count";
 
 const SubjectManagement = () => {
   const [subjects, setSubjects] = useState<Subject[]>([]);
@@ -112,10 +122,16 @@ const SubjectManagement = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState<number>(PAGE_SIZES[0]);
 
-  // NEW: filter states
-  const [filterStrand, setFilterStrand] = useState<string>("");      // "" means All
+  // Filters
   const [filterType, setFilterType] = useState<string>("");
   const [filterGrade, setFilterGrade] = useState<string>("");
+
+  // Tabs by course (strand)
+  const [activeCourse, setActiveCourse] = useState<string>("__ALL__");
+
+  // NEW: sorting state
+  const [sortKey, setSortKey] = useState<SortKey>("code");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
   // Fetch subjects
   const fetchSubjects = async () => {
@@ -128,11 +144,11 @@ const SubjectManagement = () => {
           name: subject.subj_name || subject.name,
           code: subject.subj_code || subject.code,
           description: subject.subj_description || subject.description,
-          units: subject.subj_units || subject.units,
-          type: subject.subj_type || subject.type,                   // map type
-          hoursPerWeek: subject.subj_hours_per_week || subject.hoursPerWeek,
-          gradeLevel: subject.grade_level || subject.gradeLevel || "", // map grade level
-          strand: subject.strand || "",                                // map strand
+          units: subject.subj_units ?? subject.units ?? undefined,
+          type: subject.subj_type || subject.type,
+          hoursPerWeek: subject.subj_hours_per_week ?? subject.hoursPerWeek ?? undefined,
+          gradeLevel: subject.grade_level || subject.gradeLevel || "",
+          strand: subject.strand || "",
           schedule_count: subject.schedule_count || 0,
         }));
         setSubjects(mappedSubjects);
@@ -195,8 +211,8 @@ const SubjectManagement = () => {
     fetchSubjects();
   }, []);
 
-  // Build filter option lists from current subjects
-  const strandOptions = useMemo(() => {
+  // Build option lists from current subjects
+  const courseTabs = useMemo(() => {
     const set = new Set<string>();
     subjects.forEach((s) => s.strand && set.add(String(s.strand)));
     return Array.from(set).sort((a, b) => a.localeCompare(b));
@@ -211,49 +227,78 @@ const SubjectManagement = () => {
   const gradeOptions = useMemo(() => {
     const set = new Set<string>();
     subjects.forEach((s) => s.gradeLevel && set.add(String(s.gradeLevel)));
-    // numeric-ish sort if all numeric, else lexicographic
-    const allNum = Array.from(set).every((v) => /^\d+$/.test(v));
     const arr = Array.from(set);
+    const allNum = arr.every((v) => /^\d+$/.test(v));
     return allNum ? arr.sort((a, b) => Number(a) - Number(b)) : arr.sort((a, b) => a.localeCompare(b));
   }, [subjects]);
 
-  // Filter logic (search + filters)
+  // Filter logic (tab + search + filters)
   const filteredSubjects = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     return subjects.filter((subject) => {
       if (!subject) return false;
-      // search
+
+      // Tabs: by strand (course)
+      if (activeCourse !== "__ALL__") {
+        if (!subject.strand || String(subject.strand) !== activeCourse) return false;
+      }
+
+      // Search
       const matchSearch =
         !q ||
         (subject.code && subject.code.toLowerCase().includes(q)) ||
-        (subject.name && subject.name.toLowerCase().includes(q));
+        (subject.name && subject.name.toLowerCase().includes(q)) ||
+        (subject.description && subject.description.toLowerCase().includes(q));
       if (!matchSearch) return false;
 
-      // filters
-      const matchStrand = !filterStrand || (subject.strand && String(subject.strand) === filterStrand);
-      if (!matchStrand) return false;
+      // Type filter
+      if (filterType && (!subject.type || String(subject.type) !== filterType)) return false;
 
-      const matchType = !filterType || (subject.type && String(subject.type) === filterType);
-      if (!matchType) return false;
-
-      const matchGrade = !filterGrade || (subject.gradeLevel && String(subject.gradeLevel) === filterGrade);
-      if (!matchGrade) return false;
+      // Grade filter
+      if (filterGrade && (!subject.gradeLevel || String(subject.gradeLevel) !== filterGrade)) return false;
 
       return true;
     });
-  }, [subjects, searchQuery, filterStrand, filterType, filterGrade]);
+  }, [subjects, searchQuery, filterType, filterGrade, activeCourse]);
 
-  // Reset to page 1 when search, page size, OR filters change
+  // NEW: sorting (after filtering, before pagination)
+  const sortedSubjects = useMemo(() => {
+    const arr = [...filteredSubjects];
+
+    const getVal = (s: Subject, key: SortKey) => {
+      const v = (s as any)[key];
+      // normalize for sorting: numbers stay numbers; strings lowercased; null/undefined => empty
+      if (v === null || v === undefined) return "";
+      if (typeof v === "number") return v;
+      return String(v).toLowerCase();
+    };
+
+    arr.sort((a, b) => {
+      const va = getVal(a, sortKey);
+      const vb = getVal(b, sortKey);
+
+      // mixed types safe compare
+      if (typeof va === "number" && typeof vb === "number") {
+        return sortDir === "asc" ? va - vb : vb - va;
+      }
+      const res = String(va).localeCompare(String(vb), undefined, { numeric: true, sensitivity: "base" });
+      return sortDir === "asc" ? res : -res;
+    });
+
+    return arr;
+  }, [filteredSubjects, sortKey, sortDir]);
+
+  // Reset to page 1 when search, page size, filters, tab, or sort change
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchQuery, pageSize, filterStrand, filterType, filterGrade]);
+  }, [searchQuery, pageSize, filterType, filterGrade, activeCourse, sortKey, sortDir]);
 
-  // Client-side pagination math
-  const totalItems = filteredSubjects.length;
+  // Pagination
+  const totalItems = sortedSubjects.length;
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
   const pageStartIndex = (currentPage - 1) * pageSize;
   const pageEndIndex = Math.min(pageStartIndex + pageSize, totalItems);
-  const paginatedSubjects = filteredSubjects.slice(pageStartIndex, pageEndIndex);
+  const paginatedSubjects = sortedSubjects.slice(pageStartIndex, pageEndIndex);
 
   const gotoFirst = () => setCurrentPage(1);
   const gotoPrev = () => setCurrentPage((p) => Math.max(1, p - 1));
@@ -269,13 +314,12 @@ const SubjectManagement = () => {
       }
 
       const subjectData = {
-        // snake_case for PHP (only these; no duplicates)
         subj_code: data.code,
         subj_name: data.name,
         subj_description: data.description || "",
         subj_type: data.type ?? "core",
         strand: data.strand ?? "",
-        grade_level: data.gradeLevel, // REQUIRED
+        grade_level: data.gradeLevel,
       };
 
       const response = await apiService.createSubject(subjectData);
@@ -292,7 +336,6 @@ const SubjectManagement = () => {
     }
   };
 
-
   // UPDATE
   const handleEditSubject = async (data: Omit<Subject, "id">) => {
     if (!currentSubject) return;
@@ -303,13 +346,12 @@ const SubjectManagement = () => {
       }
 
       const subjectData = {
-        // snake_case only; no duplicates
         subj_code: data.code,
         subj_name: data.name,
         subj_description: data.description || "",
         subj_type: data.type ?? "core",
         strand: data.strand ?? "",
-        grade_level: data.gradeLevel, // REQUIRED
+        grade_level: data.gradeLevel,
       };
 
       const response = await apiService.updateSubject(Number(currentSubject.id), subjectData);
@@ -325,7 +367,6 @@ const SubjectManagement = () => {
       toast({ title: "Error", description: `Failed to update subject: ${errorMessage}`, variant: "destructive" });
     }
   };
-
 
   // Bulk upload submit
   const handleBulkUpload = async (file: File) => {
@@ -406,9 +447,46 @@ const SubjectManagement = () => {
   };
 
   const clearFilters = () => {
-    setFilterStrand("");
     setFilterType("");
     setFilterGrade("");
+    setSearchQuery("");
+  };
+
+  // NEW: helper to toggle sorting
+  const toggleSort = (key: SortKey) => {
+    setSortKey((prevKey) => {
+      if (prevKey !== key) {
+        setSortDir("asc");
+        return key;
+      }
+      // same key: flip direction
+      setSortDir((prevDir) => (prevDir === "asc" ? "desc" : "asc"));
+      return prevKey;
+    });
+  };
+
+  // NEW: header renderer
+  const SortableHeader: React.FC<{ label: string; column: SortKey; className?: string }> = ({
+    label,
+    column,
+    className,
+  }) => {
+    const active = sortKey === column;
+    return (
+      <button
+        type="button"
+        onClick={() => toggleSort(column)}
+        className={`inline-flex items-center gap-1 hover:opacity-80 ${className || ""}`}
+        aria-label={`Sort by ${label} ${active ? `(${sortDir})` : ""}`}
+      >
+        <span>{label}</span>
+        <ArrowUpDown
+          className={`h-3.5 w-3.5 transition-transform ${
+            active ? (sortDir === "asc" ? "rotate-180" : "rotate-0") : "opacity-40"
+          }`}
+        />
+      </button>
+    );
   };
 
   return (
@@ -437,182 +515,226 @@ const SubjectManagement = () => {
         </DropdownMenu>
       </div>
 
-      {/* Search + Filters */}
-      <div className="flex flex-col gap-3 md:grid md:grid-cols-2 lg:grid-cols-5 mb-6">
-        <div className="relative col-span-2">
-          <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Search subjects..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="pl-10"
-          />
-        </div>
+      {/* Tabs by Course (strand) */}
+      <Tabs value={activeCourse} onValueChange={setActiveCourse} className="mb-4">
+        <TabsList className="w-full overflow-x-auto">
+          <TabsTrigger value="__ALL__">All</TabsTrigger>
+          {courseTabs.map((c) => (
+            <TabsTrigger key={c} value={c}>
+              {c}
+            </TabsTrigger>
+          ))}
+        </TabsList>
 
-        {/* Strand filter */}
-        <Select
-          value={filterStrand}
-          onValueChange={(v) => setFilterStrand(v === ALL_VALUES.strand ? "" : v)}
-        >
-          <SelectTrigger className="w-full">
-            <SelectValue placeholder="All strands" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ALL_VALUES.strand}>All strands</SelectItem>
-            {strandOptions.map((s) => (
-              <SelectItem key={s} value={s}>
-                {s}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        {/* Type filter */}
-        <Select
-          value={filterType}
-          onValueChange={(v) => setFilterType(v === ALL_VALUES.type ? "" : v)}
-        >
-          <SelectTrigger className="w-full">
-            <SelectValue placeholder="All types" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ALL_VALUES.type}>All types</SelectItem>
-            {typeOptions.map((t) => (
-              <SelectItem key={t} value={t}>
-                {t}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        {/* Grade level filter */}
-        <Select
-          value={filterGrade}
-          onValueChange={(v) => setFilterGrade(v === ALL_VALUES.grade ? "" : v)}
-        >
-          <SelectTrigger className="w-full">
-            <SelectValue placeholder="All grade levels" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ALL_VALUES.grade}>All grade levels</SelectItem>
-            {gradeOptions.map((g) => (
-              <SelectItem key={g} value={g}>
-                {g}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-
-        {/* Clear filters button (full width on small, inline on large) */}
-        <div className="lg:col-span-1">
-          <Button variant="outline" className="w-full" onClick={clearFilters}>
-            Clear filters
-          </Button>
-        </div>
-      </div>
-
-      {error && (
-        <div className="bg-red-50 text-red-700 p-4 mb-6 rounded-md border border-red-200">
-          {error}
-        </div>
-      )}
-
-      {isLoading ? (
-        <div className="text-center py-10">Loading subjects...</div>
-      ) : (
-        <>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Code</TableHead>
-                <TableHead>Name</TableHead>
-                <TableHead>Description</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {paginatedSubjects.length > 0 ? (
-                paginatedSubjects.map((subject) => (
-                  <TableRow key={subject.id}>
-                    <TableCell className="font-medium">{subject.code}</TableCell>
-                    <TableCell>{subject.name}</TableCell>
-                    <TableCell className="max-w-md truncate">
-                      {subject.description || ""}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-2">
-                        <Button variant="ghost" size="icon" onClick={() => openViewDialog(subject)}>
-                          <Eye className="h-4 w-4" />
-                        </Button>
-                        <Button variant="ghost" size="icon" onClick={() => openEditDialog(subject)}>
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                        <Button variant="ghost" size="icon" onClick={() => openDeleteDialog(subject)}>
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))
-              ) : (
-                <TableRow>
-                  <TableCell colSpan={4} className="text-center py-6">
-                    {filteredSubjects.length === 0 ? "No subjects found" : "No subjects on this page"}
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-
-          {/* Pagination footer */}
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mt-4">
-            <div className="text-sm text-muted-foreground">
-              Showing{" "}
-              <span className="font-medium">{totalItems === 0 ? 0 : pageStartIndex + 1}</span>
-              –<span className="font-medium">{pageEndIndex}</span> of{" "}
-              <span className="font-medium">{totalItems}</span> subjects
-              {searchQuery || filterStrand || filterType || filterGrade ? (
-                <span>
-                  {" "}
-                  (filtered from <span className="font-medium">{subjects.length}</span>)
-                </span>
-              ) : null}
-            </div>
-
-            <div className="flex items-center gap-2">
-              <Button variant="outline" size="icon" onClick={gotoFirst} disabled={currentPage === 1}>
-                <ChevronsLeft className="h-4 w-4" />
-              </Button>
-              <Button variant="outline" size="icon" onClick={gotoPrev} disabled={currentPage === 1}>
-                <ChevronLeft className="h-4 w-4" />
-              </Button>
-
-              <span className="text-sm px-2">
-                Page <span className="font-medium">{currentPage}</span> of{" "}
-                <span className="font-medium">{totalPages}</span>
-              </span>
-
-              <Button
-                variant="outline"
-                size="icon"
-                onClick={gotoNext}
-                disabled={currentPage === totalPages || totalItems === 0}
-              >
-                <ChevronRight className="h-4 w-4" />
-              </Button>
-              <Button
-                variant="outline"
-                size="icon"
-                onClick={gotoLast}
-                disabled={currentPage === totalPages || totalItems === 0}
-              >
-                <ChevronsRight className="h-4 w-4" />
-              </Button>
-            </div>
+        {/* Common controls above table (search + filters + page size) */}
+        <div className="mt-4 flex flex-col gap-3 md:grid md:grid-cols-2 lg:grid-cols-5 items-start">
+          <div className="relative col-span-2 w-full">
+            <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder={`Search ${activeCourse === "__ALL__" ? "subjects" : `${activeCourse} subjects`}...`}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-10"
+            />
           </div>
-        </>
-      )}
+
+          {/* Type filter */}
+          <Select
+            value={filterType}
+            onValueChange={(v) => setFilterType(v === "__ALL__" ? "" : v)}
+          >
+            <SelectTrigger className="w-full">
+              <SelectValue placeholder="All types" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__ALL__">All types</SelectItem>
+              {typeOptions.map((t) => (
+                <SelectItem key={t} value={t}>
+                  {t}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          {/* Grade level filter */}
+          <Select
+            value={filterGrade}
+            onValueChange={(v) => setFilterGrade(v === "__ALL__" ? "" : v)}
+          >
+            <SelectTrigger className="w-full">
+              <SelectValue placeholder="All grade levels" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__ALL__">All grade levels</SelectItem>
+              {gradeOptions.map((g) => (
+                <SelectItem key={g} value={g}>
+                  {g}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          {/* Page size */}
+          <Select
+            value={String(pageSize)}
+            onValueChange={(v) => setPageSize(Number(v))}
+          >
+            <SelectTrigger className="w-full">
+              <SelectValue placeholder="Rows per page" />
+            </SelectTrigger>
+            <SelectContent>
+              {PAGE_SIZES.map((s) => (
+                <SelectItem key={s} value={String(s)}>
+                  {s} / page
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          {/* Clear filters */}
+          <div className="lg:col-span-1 w-full">
+            <Button variant="outline" className="w-full" onClick={clearFilters}>
+              Clear filters
+            </Button>
+          </div>
+        </div>
+
+        <TabsContent value={activeCourse} className="mt-4">
+          {error && (
+            <div className="bg-red-50 text-red-700 p-4 mb-6 rounded-md border border-red-200">
+              {error}
+            </div>
+          )}
+
+          {isLoading ? (
+            <div className="text-center py-10">Loading subjects...</div>
+          ) : (
+            <>
+              <div className="border rounded-md">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>
+                        <SortableHeader label="Code" column="code" />
+                      </TableHead>
+                      <TableHead>
+                        <SortableHeader label="Name" column="name" />
+                      </TableHead>
+                      <TableHead className="hidden md:table-cell">
+                        <SortableHeader label="Course" column="strand" />
+                      </TableHead>
+                      <TableHead className="hidden sm:table-cell">
+                        <SortableHeader label="Grade" column="gradeLevel" />
+                      </TableHead>
+                      <TableHead className="hidden lg:table-cell">
+                        <SortableHeader label="Type" column="type" />
+                      </TableHead>
+                      <TableHead className="hidden xl:table-cell">
+                        <SortableHeader label="Units" column="units" />
+                      </TableHead>
+                      <TableHead className="hidden xl:table-cell">
+                        <SortableHeader label="Hrs/Wk" column="hoursPerWeek" />
+                      </TableHead>
+                      <TableHead className="hidden lg:table-cell">
+                        <SortableHeader label="#Schedules" column="schedule_count" />
+                      </TableHead>
+                      <TableHead className="hidden 2xl:table-cell max-w-[320px]">
+                        Description
+                      </TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {paginatedSubjects.length > 0 ? (
+                      paginatedSubjects.map((subject) => (
+                        <TableRow key={subject.id}>
+                          <TableCell className="font-medium">{subject.code}</TableCell>
+                          <TableCell>{subject.name}</TableCell>
+                          <TableCell className="hidden md:table-cell">{subject.strand || "-"}</TableCell>
+                          <TableCell className="hidden sm:table-cell">{subject.gradeLevel || "-"}</TableCell>
+                          <TableCell className="hidden lg:table-cell">{subject.type || "-"}</TableCell>
+                          <TableCell className="hidden xl:table-cell">{subject.units ?? "-"}</TableCell>
+                          <TableCell className="hidden xl:table-cell">{subject.hoursPerWeek ?? "-"}</TableCell>
+                          <TableCell className="hidden lg:table-cell">{subject.schedule_count ?? 0}</TableCell>
+                          <TableCell className="hidden 2xl:table-cell max-w-[320px] truncate">
+                            {subject.description || ""}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <div className="flex justify-end gap-2">
+                              <Button variant="ghost" size="icon" onClick={() => openViewDialog(subject)}>
+                                <Eye className="h-4 w-4" />
+                              </Button>
+                              <Button variant="ghost" size="icon" onClick={() => openEditDialog(subject)}>
+                                <Pencil className="h-4 w-4" />
+                              </Button>
+                              <Button variant="ghost" size="icon" onClick={() => openDeleteDialog(subject)}>
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    ) : (
+                      <TableRow>
+                        <TableCell colSpan={10} className="text-center py-6">
+                          {sortedSubjects.length === 0 ? "No subjects found" : "No subjects on this page"}
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+
+              {/* Footer: counts + pagination */}
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mt-4">
+                <div className="text-sm text-muted-foreground">
+                  Showing{" "}
+                  <span className="font-medium">{totalItems === 0 ? 0 : pageStartIndex + 1}</span>
+                  –<span className="font-medium">{pageEndIndex}</span> of{" "}
+                  <span className="font-medium">{totalItems}</span> subjects
+                  {(searchQuery || filterType || filterGrade || activeCourse !== "__ALL__") ? (
+                    <span>
+                      {" "}
+                      (filtered from <span className="font-medium">{subjects.length}</span>)
+                    </span>
+                  ) : null}
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <Button variant="outline" size="icon" onClick={gotoFirst} disabled={currentPage === 1}>
+                    <ChevronsLeft className="h-4 w-4" />
+                  </Button>
+                  <Button variant="outline" size="icon" onClick={gotoPrev} disabled={currentPage === 1}>
+                    <ChevronLeft className="h-4 w-4" />
+                  </Button>
+
+                  <span className="text-sm px-2">
+                    Page <span className="font-medium">{currentPage}</span> of{" "}
+                    <span className="font-medium">{totalPages}</span>
+                  </span>
+
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    onClick={gotoNext}
+                    disabled={currentPage === totalPages || totalItems === 0}
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    onClick={gotoLast}
+                    disabled={currentPage === totalPages || totalItems === 0}
+                  >
+                    <ChevronsRight className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            </>
+          )}
+        </TabsContent>
+      </Tabs>
 
       {/* Manual Add Dialog */}
       <SubjectForm open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen} onSubmit={handleAddSubject} />
@@ -631,7 +753,7 @@ const SubjectManagement = () => {
             gradeLevel:
               currentSubject.gradeLevel && String(currentSubject.gradeLevel).trim() !== ""
                 ? String(currentSubject.gradeLevel)
-                : "11", // default
+                : "11",
           }}
           onSubmit={handleEditSubject}
         />
@@ -640,12 +762,18 @@ const SubjectManagement = () => {
       {/* View Subject Dialog */}
       {currentSubject && (
         <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>
-          <DialogContent className="sm:max-w-[600px] bg-white">
+          <DialogContent className="sm:max-w-[700px] bg-white">
             <DialogHeader>
               <DialogTitle className="text-xl font-bold">
-                Subject Details: {currentSubject.code} - {currentSubject.name}
+                {currentSubject.code} — {currentSubject.name}
               </DialogTitle>
-              <DialogDescription>View details and assigned professors for this subject.</DialogDescription>
+              <DialogDescription>
+                Course: <span className="font-medium">{currentSubject.strand || "-"}</span> · Grade:{" "}
+                <span className="font-medium">{currentSubject.gradeLevel || "-"}</span> · Type:{" "}
+                <span className="font-medium">{currentSubject.type || "-"}</span> · Units:{" "}
+                <span className="font-medium">{currentSubject.units ?? "-"}</span> · Hrs/Wk:{" "}
+                <span className="font-medium">{currentSubject.hoursPerWeek ?? "-"}</span>
+              </DialogDescription>
             </DialogHeader>
 
             <div className="py-4">
