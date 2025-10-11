@@ -39,7 +39,7 @@ import RoomSelectors from "./RoomSelectors";
 import { useRoomOptions } from "./useRoomOptions";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
-const SCHOOL_START = "07:30";
+const SCHOOL_START = "08:30";
 const SCHOOL_END = "16:30";
 const LUNCH_START = "12:00";
 const LUNCH_END = "13:00";
@@ -190,7 +190,7 @@ const ScheduleForm: React.FC<ScheduleFormProps> = ({
     schedules: false,
     submission: false,
     sectionSubjects: false,
-    subjectProfessors: false, // ✅ loading state for profs assigned to subject
+    subjectProfessors: false,
   });
 
   const [conflicts, setConflicts] = useState<string[]>([]);
