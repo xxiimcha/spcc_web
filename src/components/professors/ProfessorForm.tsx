@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
@@ -30,14 +30,24 @@ import axios from "axios";
 const ABS_SUBJECTS_URL = "http://localhost/spcc_database/subjects.php";
 const ABS_PROFESSORS_URL = "http://localhost/spcc_database/professors.php";
 
+/** Utility validators */
+const optionalNonEmpty = (schema: z.ZodTypeAny) =>
+  z.union([schema, z.literal("").transform(() => undefined)]);
+
+/** PH-friendly phone: allows +63 or 09… and digits/spaces/dashes */
+const phoneRegex = /^(?:\+?63|0)?(?:\d[\s-]?){9,12}\d$/;
+
 /** Zod schema */
 const formSchema = z.object({
   name: z.string().min(2, { message: "Name must be at least 2 characters" }),
-  username: z.string().min(4, { message: "Username must be at least 4 characters" }),
+  username: z
+    .string()
+    .min(4, { message: "Username must be at least 4 characters" })
+    .regex(/^[a-z0-9._-]+$/, { message: "Use lowercase letters, numbers, dot, underscore, or dash" }),
   password: z.string().min(6, { message: "Password must be at least 6 characters" }),
-  email: z.string().email({ message: "Please enter a valid email address" }).optional().or(z.literal("")),
-  phone: z.string().min(10, { message: "Please enter a valid phone number" }).optional().or(z.literal("")),
-  qualifications: z.array(z.string()).min(1, { message: "Add at least one qualification" }),
+  email: optionalNonEmpty(z.string().email({ message: "Please enter a valid email address" })),
+  phone: optionalNonEmpty(z.string().regex(phoneRegex, { message: "Please enter a valid phone number" })),
+  qualifications: z.array(z.string()).min(1, { message: "Add at least one specialization" }),
   subject_ids: z.array(z.number()).nonempty({ message: "Assign at least one subject" }),
 });
 
@@ -57,21 +67,63 @@ interface Subject {
   description?: string;
 }
 
-const arraysEqual = (a: number[] = [], b: number[] = []) => {
-  if (a === b) return true;
+/** Order-agnostic numerical array compare */
+const arraysEqualUnordered = (a: number[] = [], b: number[] = []) => {
   if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  const sa = [...a].sort((x, y) => x - y);
+  const sb = [...b].sort((x, y) => x - y);
+  for (let i = 0; i < sa.length; i++) if (sa[i] !== sb[i]) return false;
   return true;
 };
 
 const normalizeSubjectsResponse = (raw: any): Subject[] => {
-  const list = Array.isArray(raw?.data) ? raw.data : [];
-  return list.map((s: any) => ({
-    id: Number(s.subj_id ?? s.id ?? 0),
-    code: String(s.subj_code ?? s.code ?? "").trim(),
-    name: String(s.subj_name ?? s.name ?? "").trim(),
-    description: String(s.subj_description ?? s.description ?? "").trim(),
-  }));
+  const list = Array.isArray(raw?.data) ? raw.data : Array.isArray(raw) ? raw : [];
+  return list
+    .map((s: any) => ({
+      id: Number(s.subj_id ?? s.id ?? 0),
+      code: String(s.subj_code ?? s.code ?? "").trim(),
+      name: String(s.subj_name ?? s.name ?? "").trim(),
+      description: (s.subj_description ?? s.description ?? "")?.toString()?.trim() || undefined,
+    }))
+    .filter((s: Subject) => s.id > 0 && (s.code || s.name));
+};
+
+/** Username generator helpers */
+const latinize = (str: string) =>
+  str
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+
+const makeUsername = (name: string) => {
+  const clean = latinize(name).replace(/[^a-z\s-]/g, " ").trim();
+  if (!clean) return `user${Math.floor(Math.random() * 10000)}`;
+  const parts = clean.split(/\s+/);
+  const base = `${parts[0]}${parts[1]?.charAt(0) ?? ""}`;
+  const suffix = Math.floor(Math.random() * 1000)
+    .toString()
+    .padStart(3, "0");
+  return (base || "user") + suffix;
+};
+
+/** Stronger password with 12 chars */
+const makePassword = (len = 12) => {
+  const sets = [
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+    "abcdefghijklmnopqrstuvwxyz",
+    "0123456789",
+  ];
+  // ensure at least one from each
+  const required = sets.map((s) => s[Math.floor(Math.random() * s.length)]);
+  const all = sets.join("");
+  const remain = Array.from({ length: Math.max(0, len - required.length) }, () => all[Math.floor(Math.random() * all.length)]);
+  const raw = [...required, ...remain];
+  // shuffle
+  for (let i = raw.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [raw[i], raw[j]] = [raw[j], raw[i]];
+  }
+  return raw.join("");
 };
 
 const ProfessorForm = ({
@@ -106,6 +158,8 @@ const ProfessorForm = ({
     (initialData.subject_ids as number[]) || []
   );
 
+  const abortRef = useRef<AbortController | null>(null);
+
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
     defaultValues: {
@@ -117,34 +171,42 @@ const ProfessorForm = ({
   });
 
   /** Load subjects */
+  const loadSubjects = async () => {
+    try {
+      abortRef.current?.abort();
+      abortRef.current = new AbortController();
+      setSubjectsLoading(true);
+      setSubjectsError(null);
+
+      const res = await axios.get(ABS_SUBJECTS_URL, {
+        timeout: 15000,
+        signal: abortRef.current.signal as any,
+      });
+
+      const normalized = normalizeSubjectsResponse(res?.data);
+      setSubjects(normalized);
+    } catch (e: any) {
+      if (e?.name === "CanceledError" || e?.code === "ERR_CANCELED") return;
+      console.error("Failed to load subjects:", e);
+      setSubjects([]);
+      setSubjectsError("Failed to load subjects");
+    } finally {
+      setSubjectsLoading(false);
+    }
+  };
+
   useEffect(() => {
-    let mounted = true;
-    (async () => {
-      try {
-        setSubjectsLoading(true);
-        setSubjectsError(null);
-        const { data } = await axios.get(ABS_SUBJECTS_URL, { timeout: 15000 });
-        if (!mounted) return;
-        const normalized = normalizeSubjectsResponse(Array.isArray(data) ? { data } : data);
-        setSubjects(normalized);
-      } catch (e) {
-        if (!mounted) return;
-        console.error("Failed to load subjects:", e);
-        setSubjectsError("Failed to load subjects");
-        setSubjects([]);
-      } finally {
-        if (mounted) setSubjectsLoading(false);
-      }
-    })();
+    loadSubjects();
     return () => {
-      mounted = false;
+      abortRef.current?.abort();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /** Keep subject_ids in sync when editing */
   useEffect(() => {
-    const incoming = (initialData.subject_ids as number[]) || [];
-    if (!arraysEqual(incoming, selectedSubjectIds)) {
+    const incoming = ((initialData.subject_ids as number[]) || []).map(Number);
+    if (!arraysEqualUnordered(incoming, selectedSubjectIds)) {
       setSelectedSubjectIds(incoming);
       form.setValue("subject_ids", incoming, { shouldValidate: true });
     }
@@ -167,36 +229,25 @@ const ProfessorForm = ({
     setSelectedSubjectIds([]);
   };
 
-  const generateUsername = () => {
+  const handleGenerateUsername = () => {
     const name = form.getValues("name");
-    if (!name || name.trim() === "") {
-      const randomName = "user" + Math.floor(Math.random() * 10000);
-      form.setValue("username", randomName);
-      return;
-    }
-    const nameParts = name.toLowerCase().trim().split(" ");
-    const generatedUsername =
-      nameParts[0] + (nameParts.length > 1 ? nameParts[1].charAt(0) : "") + Math.floor(Math.random() * 1000);
-    form.setValue("username", generatedUsername);
+    const candidate = name && name.trim() !== "" ? makeUsername(name) : makeUsername("");
+    form.setValue("username", candidate, { shouldValidate: true, shouldDirty: true });
   };
 
-  const generatePassword = () => {
-    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-    let password = "";
-    for (let i = 0; i < 8; i++) {
-      password += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    form.setValue("password", password);
+  const handleGeneratePassword = () => {
+    const pwd = makePassword(12);
+    form.setValue("password", pwd, { shouldValidate: true, shouldDirty: true });
     setShowPassword(true);
   };
 
   const addQualification = () => {
-    if (newQualification.trim() !== "") {
-      const updated = [...qualifications, newQualification.trim()];
-      setQualifications(updated);
-      form.setValue("qualifications", updated, { shouldValidate: true });
-      setNewQualification("");
-    }
+    const q = newQualification.trim();
+    if (!q) return;
+    const next = Array.from(new Set([...qualifications, q]));
+    setQualifications(next);
+    form.setValue("qualifications", next, { shouldValidate: true });
+    setNewQualification("");
   };
 
   const removeQualification = (index: number) => {
@@ -212,23 +263,47 @@ const ProfessorForm = ({
 
   const toggleAllSubjects = () => {
     if (subjects.length === 0) return;
-    const ids = subjects.map((s) => s.id);
+    const ids = subjects.map((s) => Number(s.id));
     if (allSelected) {
       if (selectedSubjectIds.length === 0) return;
       setSelectedSubjectIds([]);
       form.setValue("subject_ids", [], { shouldValidate: true });
     } else {
-      if (arraysEqual(selectedSubjectIds, ids)) return;
+      if (arraysEqualUnordered(selectedSubjectIds, ids)) return;
       setSelectedSubjectIds(ids);
       form.setValue("subject_ids", ids, { shouldValidate: true });
     }
   };
 
   const toggleSubject = (id: number, checked: boolean) => {
-    const next = checked ? Array.from(new Set([...selectedSubjectIds, id])) : selectedSubjectIds.filter((x) => x !== id);
+    const nId = Number(id);
+    const next = checked
+      ? Array.from(new Set([...selectedSubjectIds, nId]))
+      : selectedSubjectIds.filter((x) => x !== nId);
     setSelectedSubjectIds(next);
     form.setValue("subject_ids", next, { shouldValidate: true });
   };
+
+  /** Simple dirty check for edit mode to avoid no-op submit */
+  const isEdit = Boolean(initialData.prof_id);
+  const isNoChange = useMemo(() => {
+    if (!isEdit) return false;
+    const values = form.getValues();
+    const baseSame =
+      (values.name || "") === (initialData.name || "") &&
+      (values.username || "") === (initialData.username || "") &&
+      (values.password || "") === (initialData.password || "") &&
+      (values.email || "") === (initialData.email || "") &&
+      (values.phone || "") === (initialData.phone || "");
+    const qualsSame =
+      JSON.stringify((values.qualifications || []).map((s) => s.trim())) ===
+      JSON.stringify((initialData.qualifications || []).map((s) => s.trim()));
+    const subjectsSame = arraysEqualUnordered(
+      (values.subject_ids || []).map(Number),
+      ((initialData.subject_ids as number[]) || []).map(Number)
+    );
+    return baseSame && qualsSame && subjectsSame;
+  }, [form.watch(), initialData, isEdit]);
 
   /** Create/Update submit wired to PHP directly */
   const handleSubmit = async (data: z.infer<typeof formSchema>) => {
@@ -236,29 +311,24 @@ const ProfessorForm = ({
       setIsSubmitting(true);
 
       const payload = {
-        name: data.name,
-        username: data.username,
+        name: data.name.trim(),
+        username: data.username.trim(),
         password: data.password,
         email: data.email || "",
         phone: data.phone || "",
-        qualifications: qualifications,      // string[]
-        subject_ids: selectedSubjectIds,     // number[]
+        qualifications: qualifications.map((q) => q.trim()).filter(Boolean),
+        subject_ids: selectedSubjectIds.map(Number),
       };
 
-      const isEdit = Boolean(initialData.prof_id);
       let res;
       if (isEdit) {
-        // PUT /professors.php?id={prof_id}
         const url = `${ABS_PROFESSORS_URL}?id=${initialData.prof_id}`;
-        console.log("➡️ Updating professor:", url, payload);
+        // PUT /professors.php?id={prof_id}
         res = await axios.put(url, payload, { timeout: 20000 });
       } else {
         // POST /professors.php
-        console.log("➡️ Creating professor:", ABS_PROFESSORS_URL, payload);
         res = await axios.post(ABS_PROFESSORS_URL, payload, { timeout: 20000 });
       }
-
-      console.log("✅ Server response:", res?.status, res?.data);
 
       const ok =
         res?.data?.status === "success" ||
@@ -273,13 +343,20 @@ const ProfessorForm = ({
         resetForm();
         onSaved?.();
       } else {
-        const msg = res?.data?.message || "Failed to save professor data. Please try again.";
+        const msg =
+          res?.data?.message ||
+          res?.data?.error ||
+          "Failed to save professor data. Please try again.";
         setErrorMessage(msg);
         setIsErrorDialogOpen(true);
       }
     } catch (err: any) {
       console.error("❌ Submit error:", err?.response?.data || err?.message || err);
-      const serverMsg = err?.response?.data?.message || err?.message || "An error occurred while submitting the form";
+      const serverMsg =
+        err?.response?.data?.message ||
+        err?.response?.data?.error ||
+        err?.message ||
+        "An error occurred while submitting the form";
       setErrorMessage(serverMsg);
       setIsErrorDialogOpen(true);
     } finally {
@@ -292,6 +369,8 @@ const ProfessorForm = ({
     if (shouldCloseForm && onOpenChange) onOpenChange(false);
   };
 
+  const selectedCount = selectedSubjectIds.length;
+
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
@@ -301,7 +380,9 @@ const ProfessorForm = ({
               {initialData.name ? "Edit Professor" : "Add New Professor"}
             </DialogTitle>
             <DialogDescription>
-              {initialData.name ? "Update the professor information below." : "Fill in the details to create a new professor account."}
+              {initialData.name
+                ? "Update the professor information below."
+                : "Fill in the details to create a new professor account."}
             </DialogDescription>
           </DialogHeader>
 
@@ -315,8 +396,8 @@ const ProfessorForm = ({
                     size="sm"
                     className="flex items-center gap-1"
                     onClick={() => {
-                      generateUsername();
-                      generatePassword();
+                      handleGenerateUsername();
+                      handleGeneratePassword();
                     }}
                   >
                     <RefreshCw className="h-3.5 w-3.5" />
@@ -331,7 +412,16 @@ const ProfessorForm = ({
                     <FormItem>
                       <FormLabel>Full Name</FormLabel>
                       <FormControl>
-                        <Input placeholder="John Doe" {...field} />
+                        <Input
+                          placeholder="John Doe"
+                          {...field}
+                          onBlur={(e) => {
+                            field.onBlur?.(e);
+                            // if username empty, suggest one from name
+                            const uname = form.getValues("username");
+                            if (!uname) handleGenerateUsername();
+                          }}
+                        />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -348,7 +438,13 @@ const ProfessorForm = ({
                         <FormControl>
                           <Input placeholder="johndoe" {...field} />
                         </FormControl>
-                        <Button type="button" size="icon" variant="outline" onClick={generateUsername} title="Auto-generate username">
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="outline"
+                          onClick={handleGenerateUsername}
+                          title="Auto-generate username"
+                        >
                           <RefreshCw className="h-4 w-4" />
                         </Button>
                       </div>
@@ -366,7 +462,11 @@ const ProfessorForm = ({
                       <div className="flex items-center space-x-2">
                         <div className="relative flex-1">
                           <FormControl>
-                            <Input type={showPassword ? "text" : "password"} placeholder="••••••" {...field} />
+                            <Input
+                              type={showPassword ? "text" : "password"}
+                              placeholder="••••••••••••"
+                              {...field}
+                            />
                           </FormControl>
                           <Button
                             type="button"
@@ -379,7 +479,13 @@ const ProfessorForm = ({
                             {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                           </Button>
                         </div>
-                        <Button type="button" size="icon" variant="outline" onClick={generatePassword} title="Auto-generate password">
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="outline"
+                          onClick={handleGeneratePassword}
+                          title="Auto-generate password"
+                        >
                           <RefreshCw className="h-4 w-4" />
                         </Button>
                       </div>
@@ -409,7 +515,7 @@ const ProfessorForm = ({
                     <FormItem>
                       <FormLabel>Phone Number (Optional)</FormLabel>
                       <FormControl>
-                        <Input placeholder="+(63) 923 456 7899" {...field} />
+                        <Input placeholder="+63 923 456 7899" {...field} />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -444,7 +550,10 @@ const ProfessorForm = ({
                       <FormMessage />
                       <div className="mt-2 flex flex-wrap gap-2">
                         {qualifications.map((q, i) => (
-                          <div key={`${q}-${i}`} className="flex items-center bg-secondary text-secondary-foreground px-3 py-1 rounded-full text-sm">
+                          <div
+                            key={`${q}-${i}`}
+                            className="flex items-center bg-secondary text-secondary-foreground px-3 py-1 rounded-full text-sm"
+                          >
                             {q}
                             <Button
                               type="button"
@@ -470,9 +579,18 @@ const ProfessorForm = ({
                 render={() => (
                   <FormItem>
                     <FormLabel className="flex items-center justify-between">
-                      <span>Assign Subjects</span>
+                      <span>
+                        Assign Subjects{" "}
+                        <span className="text-muted-foreground text-sm">({selectedCount} selected)</span>
+                      </span>
                       <div className="flex items-center gap-3">
-                        <Button type="button" size="sm" variant="outline" onClick={toggleAllSubjects} disabled={subjectsLoading}>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={toggleAllSubjects}
+                          disabled={subjectsLoading || subjects.length === 0}
+                        >
                           {allSelected ? "Clear All" : "Select All"}
                         </Button>
                         <Button
@@ -480,20 +598,8 @@ const ProfessorForm = ({
                           size="sm"
                           variant="outline"
                           disabled={subjectsLoading}
-                          onClick={async () => {
-                            try {
-                              setSubjectsLoading(true);
-                              const { data } = await axios.get(ABS_SUBJECTS_URL, { timeout: 15000 });
-                              const normalized = normalizeSubjectsResponse(Array.isArray(data) ? { data } : data);
-                              setSubjects(normalized);
-                              setSubjectsError(null);
-                            } catch (e) {
-                              console.error("Failed to reload subjects:", e);
-                              setSubjectsError("Failed to reload subjects");
-                            } finally {
-                              setSubjectsLoading(false);
-                            }
-                          }}
+                          onClick={loadSubjects}
+                          title="Reload subjects"
                         >
                           <RefreshCw className="h-4 w-4" />
                         </Button>
@@ -518,7 +624,10 @@ const ProfessorForm = ({
                                   checked={checked}
                                   onCheckedChange={(val) => toggleSubject(s.id, Boolean(val))}
                                 />
-                                <label htmlFor={`subj-${s.id}`} className="text-sm leading-none cursor-pointer select-none">
+                                <label
+                                  htmlFor={`subj-${s.id}`}
+                                  className="text-sm leading-none cursor-pointer select-none"
+                                >
                                   <span className="font-medium">{s.code || "SUBJ"}</span> - {s.name}
                                 </label>
                               </li>
@@ -537,8 +646,14 @@ const ProfessorForm = ({
                 <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
                   Cancel
                 </Button>
-                <Button type="submit" disabled={isSubmitting}>
-                  {isSubmitting ? "Submitting…" : initialData.prof_id ? "Update Professor" : "Add Professor"}
+                <Button type="submit" disabled={isSubmitting || isNoChange}>
+                  {isSubmitting
+                    ? "Submitting…"
+                    : initialData.prof_id
+                    ? isNoChange
+                      ? "No changes"
+                      : "Update Professor"
+                    : "Add Professor"}
                 </Button>
               </DialogFooter>
             </form>
@@ -546,8 +661,16 @@ const ProfessorForm = ({
         </DialogContent>
       </Dialog>
 
-      <SuccessMessage isOpen={isSuccessDialogOpen} onClose={handleSuccessDialogClose} message={successMessage} />
-      <ErrorMessage isOpen={isErrorDialogOpen} onClose={() => setIsErrorDialogOpen(false)} message={errorMessage} />
+      <SuccessMessage
+        isOpen={isSuccessDialogOpen}
+        onClose={handleSuccessDialogClose}
+        message={successMessage}
+      />
+      <ErrorMessage
+        isOpen={isErrorDialogOpen}
+        onClose={() => setIsErrorDialogOpen(false)}
+        message={errorMessage}
+      />
     </>
   );
 };

@@ -30,15 +30,9 @@ import SuccessMessage from "../popupmsg/SuccessMessage";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
-import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from "@/components/ui/tabs";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
-/* ---------- Types ---------- */
 type Subject = {
   id: string;
   subj_name: string;
@@ -52,63 +46,47 @@ interface Professor {
   name: string;
   email?: string;
   phone?: string;
-  qualifications: string[];
+  qualifications: any;
   username?: string;
   password?: string;
-  // possible server variants
   subjectCount?: number;
   subject_count?: number;
   subjects?: Subject[];
-  subject_ids?: (string | number)[]; // ⬅️ added
+  subject_ids?: (string | number)[];
 }
 
-/* ---------- Constants ---------- */
 const PAGE_SIZES = [10, 25, 50];
 const SUBJECT_PAGE_SIZES = [5, 10, 20];
 
-/* ---------- Component ---------- */
 const ProfessorManagement = () => {
   const [professors, setProfessors] = useState<Professor[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
   const [searchQuery, setSearchQuery] = useState("");
-
-  // Top-level (professors list) pagination
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState<number>(PAGE_SIZES[0]);
-
-  // Dialogs
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [isCredentialsDialogOpen, setIsCredentialsDialogOpen] = useState(false);
   const [selectedProfessor, setSelectedProfessor] = useState<Professor | null>(null);
-
-  // Success toast modal
   const [isSuccessDialogOpen, setIsSuccessDialogOpen] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
-
-  // Per-professor UI state
   const [activeTabById, setActiveTabById] = useState<Record<string, string>>({});
   const [subjectsLoadedIds, setSubjectsLoadedIds] = useState<Record<string, boolean>>({});
   const [loadingSubjectsIds, setLoadingSubjectsIds] = useState<Record<string, boolean>>({});
-
-  // Per-professor Subjects filters + pagination
   const [subjectGradeFilter, setSubjectGradeFilter] = useState<Record<string, string>>({});
   const [subjectStrandFilter, setSubjectStrandFilter] = useState<Record<string, string>>({});
   const [subjectPageById, setSubjectPageById] = useState<Record<string, number>>({});
   const [subjectPageSizeById, setSubjectPageSizeById] = useState<Record<string, number>>({});
-
   const { toast } = useToast();
 
-  /* ---------- Helpers ---------- */
   const subjectLoadCount = (p?: Professor | null) =>
     Number(
       p?.subjectCount ??
-      p?.subject_count ??
-      (Array.isArray(p?.subjects) ? p!.subjects!.length : undefined) ??
-      (Array.isArray(p?.subject_ids) ? p!.subject_ids!.length : 0)
+        p?.subject_count ??
+        (Array.isArray(p?.subjects) ? p!.subjects!.length : undefined) ??
+        (Array.isArray(p?.subject_ids) ? p!.subject_ids!.length : 0)
     );
 
   const getWorkloadStatusClass = (subjectCount: number) => {
@@ -133,58 +111,133 @@ const ProfessorManagement = () => {
     return String(val).toUpperCase();
   };
 
-  /* ---------- Load professors ---------- */
+  const normalizeQualifications = (val: any): string[] => {
+    if (!val && val !== 0) return [];
+
+    // If already an array
+    if (Array.isArray(val)) {
+      return val.map((x) => String(x).trim()).filter(Boolean);
+    }
+
+    // If it's an object like {"0":"IT","1":"English"} from PHP
+    if (typeof val === "object") {
+      try {
+        return Object.values(val).map((x) => String(x).trim()).filter(Boolean);
+      } catch {
+        return [];
+      }
+    }
+
+    // If it's a string possibly containing JSON or comma/semicolon separated items
+    const s = String(val).trim();
+    if (!s) return [];
+
+    // Handle double-encoded JSON e.g. "\"[\\\"IT\\\"]\""
+    try {
+      // First parse once
+      const first = JSON.parse(s);
+      if (Array.isArray(first)) {
+        return first.map((x) => String(x).trim()).filter(Boolean);
+      }
+      if (typeof first === "string") {
+        // If it’s still a string that looks like JSON array, try again
+        if (first.trim().startsWith("[")) {
+          const second = JSON.parse(first);
+          if (Array.isArray(second)) {
+            return second.map((x) => String(x).trim()).filter(Boolean);
+          }
+        }
+        // fallback to CSV split
+        return first.split(/[;,]/).map((x) => x.trim()).filter(Boolean);
+      }
+      // If it’s an object after parse
+      if (typeof first === "object" && first) {
+        return Object.values(first).map((x) => String(x).trim()).filter(Boolean);
+      }
+    } catch {
+      // Not JSON: treat as CSV
+      return s.split(/[;,]/).map((x) => x.trim()).filter(Boolean);
+    }
+
+    return [];
+  };
+
   useEffect(() => {
     fetchProfessors();
   }, []);
+  
+  const toStringArray = (val: unknown): string[] => {
+    if (Array.isArray(val)) return val.map((x) => String(x).trim()).filter(Boolean);
+    if (typeof val === "string" && /^".*"$/.test(val)) {
+      try {
+        const unquoted = JSON.parse(val);
+        if (typeof unquoted === "string") {
+          if (unquoted.trim().startsWith("[")) {
+            const innerParsed = JSON.parse(unquoted);
+            return Array.isArray(innerParsed)
+              ? innerParsed.map((x: any) => String(x).trim()).filter(Boolean)
+              : [];
+          }
+          return unquoted
+            .split(/[;,]/)
+            .map((s: string) => s.trim())
+            .filter(Boolean);
+        }
+      } catch {}
+    }
+    if (typeof val === "string" && val.trim().startsWith("[")) {
+      try {
+        const parsed = JSON.parse(val);
+        return Array.isArray(parsed) ? parsed.map((x: any) => String(x).trim()).filter(Boolean) : [];
+      } catch {}
+    }
+    if (typeof val === "string") {
+      return val
+        .split(/[;,]/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+    }
+    if (val == null) return [];
+    return [String(val)].filter(Boolean);
+  };
 
   const fetchProfessors = async () => {
     try {
       setLoading(true);
       setError(null);
       const response = await apiService.getProfessors();
-
       if (response.success && Array.isArray(response.data)) {
         const mappedProfessors = response.data.map((prof: any) => {
-          // normalize qualifications
-          let quals: string[] = [];
-          if (Array.isArray(prof.qualifications)) {
-            quals = prof.qualifications;
-          } else if (typeof prof.qualifications === "string") {
-            try {
-              const parsed = JSON.parse(prof.qualifications);
-              quals = Array.isArray(parsed)
-                ? parsed
-                : prof.qualifications.split(",").map((s: string) => s.trim()).filter(Boolean);
-            } catch {
-              quals = prof.qualifications.split(",").map((s: string) => s.trim()).filter(Boolean);
-            }
-          }
+          const id = (prof.prof_id ?? prof.id)?.toString?.();
+          const name = String(prof.prof_name ?? prof.name ?? "").trim();
 
-          const id = prof.prof_id ?? prof.id;
-          const name = prof.prof_name ?? prof.name;
+          // 🔧 robust normalization here
+          const qualifications = normalizeQualifications(
+            prof.qualifications ?? prof.prof_qualifications ?? prof.specialization ?? []
+          );
 
           const subjCount = Number(
-            prof.subj_count ??                
-            prof.subjectCount ??
-            prof.subject_count ??
-            prof.subjects_count ??
-            (Array.isArray(prof.subjects) ? prof.subjects.length : undefined) ??
-            (Array.isArray(prof.subject_ids) ? prof.subject_ids.length : 0)
+            prof.subj_count ??
+              prof.subjectCount ??
+              prof.subject_count ??
+              prof.subjects_count ??
+              (Array.isArray(prof.subjects) ? prof.subjects.length : undefined) ??
+              (Array.isArray(prof.subject_ids) ? prof.subject_ids.length : 0)
           );
 
           return {
-            id: id?.toString(),
+            id,
             name,
             email: prof.prof_email ?? prof.email,
             phone: prof.prof_phone ?? prof.phone,
-            qualifications: quals,
             username: prof.prof_username ?? prof.username,
             password: prof.prof_password ?? prof.password,
-            subject_ids: prof.subject_ids ?? [], // keep it for fallback counting
+            qualifications,               // ← already normalized
+            subject_ids: prof.subject_ids ?? [],
             subjectCount: subjCount,
           } as Professor;
         });
+
         setProfessors(mappedProfessors);
       } else {
         setProfessors([]);
@@ -202,7 +255,6 @@ const ProfessorManagement = () => {
     }
   };
 
-  /* ---------- CRUD ---------- */
   const addProfessor = async (professorData: Omit<Professor, "id">) => {
     try {
       const response = await fetch("http://localhost/spcc_database/professors.php", {
@@ -212,15 +264,7 @@ const ProfessorManagement = () => {
       });
       const result = await response.json();
       if (result.status === "error") throw new Error(result.message || "Failed to add professor");
-
-      if (result.data?.id) {
-        setProfessors((prev) => [...prev, result.data]);
-      } else if (result.professor?.id) {
-        setProfessors((prev) => [...prev, result.professor]);
-      } else {
-        await fetchProfessors();
-      }
-
+      await fetchProfessors();
       setSuccessMessage(`Professor ${professorData.name} added successfully!`);
       setIsSuccessDialogOpen(true);
       setIsAddDialogOpen(false);
@@ -244,8 +288,7 @@ const ProfessorManagement = () => {
       });
       const result = await response.json();
       if (result.status === "error") throw new Error(result.message || "Failed to update professor");
-
-      setProfessors((prev) => prev.map((p) => (p.id === id ? ({ ...professorData, id } as Professor) : p)));
+      await fetchProfessors();
       setIsEditDialogOpen(false);
       setSuccessMessage(`Professor ${professorData.name} updated successfully!`);
       setIsSuccessDialogOpen(true);
@@ -267,8 +310,7 @@ const ProfessorManagement = () => {
       });
       const result = await response.json();
       if (result.status === "error") throw new Error(result.message || "Failed to delete professor");
-
-      setProfessors((prev) => prev.filter((p) => p.id !== id));
+      await fetchProfessors();
       setIsDeleteDialogOpen(false);
       const professorName = selectedProfessor?.name || "Professor";
       setSuccessMessage(`${professorName} deleted successfully!`);
@@ -284,7 +326,6 @@ const ProfessorManagement = () => {
     }
   };
 
-  /* ---------- Subjects fetch (lazy per professor when switching to Subjects tab) ---------- */
   const fetchSubjectsFromProfessorsAPI = async (professorId: string): Promise<Subject[] | null> => {
     try {
       const res = await fetch(`http://localhost/spcc_database/professors.php?id=${professorId}`);
@@ -298,9 +339,7 @@ const ProfessorManagement = () => {
           strand: s.strand ?? s.track ?? s.strand_code,
         }));
       }
-    } catch {
-      /* ignore */
-    }
+    } catch {}
     return null;
   };
 
@@ -319,37 +358,26 @@ const ProfessorManagement = () => {
           strand: s.strand ?? s.track ?? s.strand_code,
         }));
       }
-    } catch {
-      /* ignore */
-    }
+    } catch {}
     return [];
   };
 
   const ensureSubjectsFor = async (p: Professor) => {
     if (Array.isArray(p.subjects)) return p;
-
     setLoadingSubjectsIds((m) => ({ ...m, [p.id]: true }));
-
     let subjects: Subject[] | null = await fetchSubjectsFromProfessorsAPI(p.id);
     if (!subjects) {
       subjects = await fetchSubjectsFromListAPI(p.id);
     }
-
     setLoadingSubjectsIds((m) => ({ ...m, [p.id]: false }));
     setSubjectsLoadedIds((m) => ({ ...m, [p.id]: true }));
-
-    // initialize filters/pagination defaults for this professor when first loaded
     setSubjectPageById((m) => ({ ...m, [p.id]: 1 }));
-    setSubjectPageSizeById((m) => ({ ...m, [p.id]: SUBJECT_PAGE_SIZES[1] })); // default 10
+    setSubjectPageSizeById((m) => ({ ...m, [p.id]: SUBJECT_PAGE_SIZES[1] }));
     setSubjectGradeFilter((m) => ({ ...m, [p.id]: "ALL" }));
     setSubjectStrandFilter((m) => ({ ...m, [p.id]: "ALL" }));
-
-    // ⬅️ also set subjectCount + subject_count so the card updates uniformly
     setProfessors((prev) =>
       prev.map((x) =>
-        x.id === p.id
-          ? { ...x, subjects, subject_count: subjects.length, subjectCount: subjects.length }
-          : x
+        x.id === p.id ? { ...x, subjects, subject_count: subjects.length, subjectCount: subjects.length } : x
       )
     );
     return { ...p, subjects };
@@ -365,7 +393,6 @@ const ProfessorManagement = () => {
     }
   };
 
-  /* ---------- Export helpers ---------- */
   const toFlatRows = (list: Professor[]) => {
     const rows: Array<[string, string, string, string]> = [];
     list.forEach((p) => {
@@ -408,7 +435,7 @@ const ProfessorManagement = () => {
       const enriched = await Promise.all(
         filteredProfessors.map((p) => (Array.isArray(p.subjects) ? p : ensureSubjectsFor(p)))
       );
-      const rows = toFlatRows(enriched as Professor[]);
+    const rows = toFlatRows(enriched as Professor[]);
       const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
       const title = "Professors and Assigned Subjects";
       doc.setFontSize(14);
@@ -432,7 +459,6 @@ const ProfessorManagement = () => {
     }
   };
 
-  /* ---------- List filtering & pagination (professors) ---------- */
   const filteredProfessors = useMemo(
     () =>
       professors.filter(
@@ -458,7 +484,6 @@ const ProfessorManagement = () => {
   const gotoNext = () => setCurrentPage((p) => Math.min(totalPages, p + 1));
   const gotoLast = () => setCurrentPage(totalPages);
 
-  /* ---------- Subject table helpers (filters + pagination per professor) ---------- */
   const uniqueGradesFor = (subs: Subject[]) => {
     const set = new Set<string>();
     subs.forEach((s) => set.add(normalizeGrade(s.grade_level)));
@@ -496,9 +521,7 @@ const ProfessorManagement = () => {
     return { page, size };
   };
 
-  const setSubjectPage = (id: string, page: number) =>
-    setSubjectPageById((m) => ({ ...m, [id]: page }));
-
+  const setSubjectPage = (id: string, page: number) => setSubjectPageById((m) => ({ ...m, [id]: page }));
   const setSubjectPageSize = (id: string, size: number) =>
     setSubjectPageSizeById((m) => ({ ...m, [id]: size }));
 
@@ -512,11 +535,12 @@ const ProfessorManagement = () => {
     setSubjectPage(id, 1);
   };
 
-  /* ---------- UI ---------- */
   if (loading) {
     return (
       <div className="w-full p-6 bg-white rounded-lg shadow-sm flex justify-center">
-        <div className="text-center"><p className="text-lg">Loading professors...</p></div>
+        <div className="text-center">
+          <p className="text-lg">Loading professors...</p>
+        </div>
       </div>
     );
   }
@@ -525,7 +549,9 @@ const ProfessorManagement = () => {
       <div className="w-full p-6 bg-white rounded-lg shadow-sm">
         <div className="text-center">
           <p className="text-lg text-destructive">{error}</p>
-          <Button className="mt-4" onClick={fetchProfessors}>Retry</Button>
+          <Button className="mt-4" onClick={fetchProfessors}>
+            Retry
+          </Button>
         </div>
       </div>
     );
@@ -579,13 +605,14 @@ const ProfessorManagement = () => {
             onChange={(e) => setPageSize(Number(e.target.value))}
           >
             {PAGE_SIZES.map((n) => (
-              <option key={n} value={n}>{n}</option>
+              <option key={n} value={n}>
+                {n}
+              </option>
             ))}
           </select>
         </div>
       </div>
 
-      {/* Professor Cards with Tabs */}
       <div className="space-y-4">
         {paginatedProfessors.length === 0 ? (
           <div className="p-6 text-center text-muted-foreground">
@@ -596,14 +623,13 @@ const ProfessorManagement = () => {
             const count = subjectLoadCount(p);
             const activeTab = activeTabById[p.id] || "overview";
             const { page, size } = subjectPaginationState(p.id);
-
-            // Subjects filtered + paginated
             const subsFiltered = filteredSubjectsFor(p);
             const subsTotal = subsFiltered.length;
             const subsTotalPages = Math.max(1, Math.ceil(subsTotal / size));
             const subsStart = (page - 1) * size;
             const subsEnd = Math.min(subsStart + size, subsTotal);
             const subsPage = subsFiltered.slice(subsStart, subsEnd);
+            const quals = normalizeQualifications(p.qualifications);
 
             return (
               <div key={p.id} className="rounded-lg border bg-white shadow-sm">
@@ -619,16 +645,19 @@ const ProfessorManagement = () => {
                     </div>
                     <div className="col-span-4">
                       <div className="flex flex-wrap gap-1">
-                        {p.qualifications?.length ? (
+                        {quals.length > 0 ? (
                           <>
-                            {p.qualifications.slice(0, 3).map((q, i) => (
-                              <span key={i} className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-secondary text-secondary-foreground">
+                            {quals.slice(0, 3).map((q, i) => (
+                              <span
+                                key={`${q}-${i}`}
+                                className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-secondary text-secondary-foreground"
+                              >
                                 {q}
                               </span>
                             ))}
-                            {p.qualifications.length > 3 && (
+                            {quals.length > 3 && (
                               <span className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-muted text-muted-foreground">
-                                +{p.qualifications.length - 3} more
+                                +{quals.length - 3} more
                               </span>
                             )}
                           </>
@@ -649,18 +678,12 @@ const ProfessorManagement = () => {
                   </div>
                 </div>
 
-                {/* Tabs */}
-                <Tabs
-                  value={activeTab}
-                  onValueChange={(val) => handleTabChange(p.id, val)}
-                  className="px-4 pb-4"
-                >
+                <Tabs value={activeTab} onValueChange={(val) => handleTabChange(p.id, val)} className="px-4 pb-4">
                   <TabsList className="mb-3">
                     <TabsTrigger value="overview">Overview</TabsTrigger>
                     <TabsTrigger value="subjects">Subjects</TabsTrigger>
                   </TabsList>
 
-                  {/* Overview Tab */}
                   <TabsContent value="overview" className="m-0">
                     <div className="rounded-md border p-4 bg-muted/20">
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -680,7 +703,6 @@ const ProfessorManagement = () => {
                     </div>
                   </TabsContent>
 
-                  {/* Subjects Tab */}
                   <TabsContent value="subjects" className="m-0">
                     <div className="rounded-md border p-4 bg-muted/20">
                       {loadingSubjectsIds[p.id] ? (
@@ -689,43 +711,37 @@ const ProfessorManagement = () => {
                         <div className="text-muted-foreground py-2">No subjects assigned to this professor.</div>
                       ) : (
                         <>
-                          {/* Filters */}
                           <div className="flex flex-col sm:flex-row gap-2 sm:items-center sm:justify-between mb-3">
                             <div className="flex gap-2">
-                              {/* Grade filter */}
-                              <Select
-                                value={subjectGradeFilter[p.id] ?? "ALL"}
-                                onValueChange={(v) => onGradeChange(p.id, v)}
-                              >
+                              <Select value={subjectGradeFilter[p.id] ?? "ALL"} onValueChange={(v) => onGradeChange(p.id, v)}>
                                 <SelectTrigger className="w-[180px]">
                                   <SelectValue placeholder="Filter Grade" />
                                 </SelectTrigger>
                                 <SelectContent>
                                   <SelectItem value="ALL">All Grades</SelectItem>
                                   {uniqueGradesFor(p.subjects || []).map((g) => (
-                                    <SelectItem key={g} value={g}>{g}</SelectItem>
+                                    <SelectItem key={g} value={g}>
+                                      {g}
+                                    </SelectItem>
                                   ))}
                                 </SelectContent>
                               </Select>
 
-                              {/* Strand filter */}
-                              <Select
-                                value={subjectStrandFilter[p.id] ?? "ALL"}
-                                onValueChange={(v) => onStrandChange(p.id, v)}
-                              >
+                              <Select value={subjectStrandFilter[p.id] ?? "ALL"} onValueChange={(v) => onStrandChange(p.id, v)}>
                                 <SelectTrigger className="w-[180px]">
                                   <SelectValue placeholder="Filter Strand" />
                                 </SelectTrigger>
                                 <SelectContent>
                                   <SelectItem value="ALL">All Strands</SelectItem>
                                   {uniqueStrandsFor(p.subjects || []).map((s) => (
-                                    <SelectItem key={s} value={s}>{s}</SelectItem>
+                                    <SelectItem key={s} value={s}>
+                                      {s}
+                                    </SelectItem>
                                   ))}
                                 </SelectContent>
                               </Select>
                             </div>
 
-                            {/* Page size */}
                             <div className="flex items-center gap-2">
                               <span className="text-sm text-muted-foreground">Rows</span>
                               <select
@@ -737,13 +753,14 @@ const ProfessorManagement = () => {
                                 }}
                               >
                                 {SUBJECT_PAGE_SIZES.map((n) => (
-                                  <option key={n} value={n}>{n}</option>
+                                  <option key={n} value={n}>
+                                    {n}
+                                  </option>
                                 ))}
                               </select>
                             </div>
                           </div>
 
-                          {/* Table */}
                           <div className="rounded-md border bg-white">
                             <Table>
                               <TableHeader>
@@ -775,22 +792,14 @@ const ProfessorManagement = () => {
                             </Table>
                           </div>
 
-                          {/* Pagination */}
                           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mt-4">
                             <div className="text-sm text-muted-foreground">
-                              Showing{" "}
-                              <span className="font-medium">{subsTotal === 0 ? 0 : subsStart + 1}</span>–
-                              <span className="font-medium">{subsEnd}</span> of{" "}
-                              <span className="font-medium">{subsTotal}</span> subjects
+                              Showing <span className="font-medium">{subsTotal === 0 ? 0 : subsStart + 1}</span>–
+                              <span className="font-medium">{subsEnd}</span> of <span className="font-medium">{subsTotal}</span> subjects
                             </div>
 
                             <div className="flex items-center gap-2">
-                              <Button
-                                variant="outline"
-                                size="icon"
-                                onClick={() => setSubjectPage(p.id, 1)}
-                                disabled={page === 1}
-                              >
+                              <Button variant="outline" size="icon" onClick={() => setSubjectPage(p.id, 1)} disabled={page === 1}>
                                 <ChevronsLeft className="h-4 w-4" />
                               </Button>
                               <Button
@@ -802,8 +811,7 @@ const ProfessorManagement = () => {
                                 <ChevronLeft className="h-4 w-4" />
                               </Button>
                               <span className="text-sm px-2">
-                                Page <span className="font-medium">{page}</span> of{" "}
-                                <span className="font-medium">{subsTotalPages}</span>
+                                Page <span className="font-medium">{page}</span> of <span className="font-medium">{subsTotalPages}</span>
                               </span>
                               <Button
                                 variant="outline"
@@ -834,15 +842,11 @@ const ProfessorManagement = () => {
         )}
       </div>
 
-      {/* Professors list pagination */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mt-4">
         <div className="text-sm text-muted-foreground">
           Showing <span className="font-medium">{totalItems === 0 ? 0 : pageStartIndex + 1}</span>–
-          <span className="font-medium">{pageEndIndex}</span> of{" "}
-          <span className="font-medium">{totalItems}</span> professors
-          {searchQuery ? (
-            <span> (filtered from <span className="font-medium">{professors.length}</span>)</span>
-          ) : null}
+          <span className="font-medium">{pageEndIndex}</span> of <span className="font-medium">{totalItems}</span> professors
+          {searchQuery ? <span> (filtered from <span className="font-medium">{professors.length}</span>)</span> : null}
         </div>
 
         <div className="flex items-center gap-2">
@@ -853,43 +857,36 @@ const ProfessorManagement = () => {
             <ChevronLeft className="h-4 w-4" />
           </Button>
           <span className="text-sm px-2">
-            Page <span className="font-medium">{currentPage}</span> of{" "}
-            <span className="font-medium">{totalPages}</span>
+            Page <span className="font-medium">{currentPage}</span> of <span className="font-medium">{totalPages}</span>
           </span>
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={gotoNext}
-            disabled={currentPage === totalPages || totalItems === 0}
-          >
+          <Button variant="outline" size="icon" onClick={gotoNext} disabled={currentPage === totalPages || totalItems === 0}>
             <ChevronRight className="h-4 w-4" />
           </Button>
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={gotoLast}
-            disabled={currentPage === totalPages || totalItems === 0}
-          >
+          <Button variant="outline" size="icon" onClick={gotoLast} disabled={currentPage === totalPages || totalItems === 0}>
             <ChevronsRight className="h-4 w-4" />
           </Button>
         </div>
       </div>
 
-      {/* Dialogs */}
       {isAddDialogOpen && (
         <ProfessorForm open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen} onSaved={fetchProfessors} />
       )}
 
       {isEditDialogOpen && selectedProfessor && (
         <ProfessorForm
+          key={`edit-${selectedProfessor.id}`}
           open={isEditDialogOpen}
           onOpenChange={setIsEditDialogOpen}
           initialData={{
             prof_id: Number(selectedProfessor.id),
-            name: selectedProfessor.name,
-            email: selectedProfessor.email || "",
-            phone: selectedProfessor.phone || "",
-            qualifications: selectedProfessor.qualifications || [],
+            name: selectedProfessor.name ?? "",
+            email: selectedProfessor.email ?? "",
+            phone: selectedProfessor.phone ?? "",
+            qualifications: Array.isArray(selectedProfessor.qualifications)
+              ? (selectedProfessor.qualifications as string[])
+              : toStringArray(selectedProfessor.qualifications),
+            username: selectedProfessor.username ?? "",
+            subject_ids: (selectedProfessor.subject_ids ?? []).map(Number),
           }}
           onSaved={fetchProfessors}
         />
@@ -900,8 +897,7 @@ const ProfessorManagement = () => {
           <div className="bg-white rounded-md p-6 w-[420px] shadow-lg">
             <div className="text-xl font-bold mb-2">Confirm Deletion</div>
             <p className="text-base">
-              Are you sure you want to delete professor{" "}
-              <span className="font-semibold">{selectedProfessor.name}</span>?
+              Are you sure you want to delete professor <span className="font-semibold">{selectedProfessor.name}</span>?
             </p>
             <p className="text-sm text-muted-foreground mt-2">This action cannot be undone.</p>
             <div className="flex justify-end gap-2 mt-4">
@@ -927,11 +923,7 @@ const ProfessorManagement = () => {
         message={successMessage}
       />
 
-      <CredentialsViewer
-        open={isCredentialsDialogOpen}
-        onOpenChange={setIsCredentialsDialogOpen}
-        professors={professors}
-      />
+      <CredentialsViewer open={isCredentialsDialogOpen} onOpenChange={setIsCredentialsDialogOpen} professors={professors} />
     </div>
   );
 };
