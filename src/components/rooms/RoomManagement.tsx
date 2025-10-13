@@ -92,8 +92,6 @@ interface Section {
   strand: string;
 }
 
-/* ---------- Assign Section Dialog ---------- */
-
 interface RoomSectionDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -475,7 +473,8 @@ const RoomManagement = () => {
   }, [rooms]);
 
   return (
-    <div className="max-w-screen-xl mx-auto py-6 px-3 sm:px-6">
+    <div className="max-w-screen-2xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
+
       {/* Sticky Toolbar */}
       <div className="sticky top-0 z-30 bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-b">
         <div className="py-3 space-y-3 md:space-y-0 md:flex md:items-center md:justify-between">
@@ -821,7 +820,6 @@ const RoomManagement = () => {
   );
 };
 
-/* ---------- Small presentational components ---------- */
 
 const StatCard = ({ label, value }: { label: string; value: string | number }) => (
   <Card className="shadow-none">

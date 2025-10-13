@@ -47,18 +47,16 @@ interface RoomFormProps {
   room?: Room | null;
 }
 
-/* ---------------- Helpers ---------------- */
 const allowOnlyDigits: React.KeyboardEventHandler<HTMLInputElement> = (e) => {
   const allowed = ["Backspace", "Delete", "Tab", "ArrowLeft", "ArrowRight", "Home", "End"];
   if (allowed.includes(e.key)) return;
   if (/^\d$/.test(e.key)) return;
-  e.preventDefault(); // block everything else
+  e.preventDefault(); 
 };
 
 const clamp = (n: number, min: number, max: number) =>
   Math.max(min, Math.min(max, n));
 
-/* ---------------- Component ---------------- */
 const RoomForm: React.FC<RoomFormProps> = ({
   open = false,
   onOpenChange,

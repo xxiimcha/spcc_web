@@ -1,8 +1,8 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
-import { AlertTriangle, Plus } from "lucide-react";
+import { AlertTriangle, Plus, Check, ChevronsUpDown, X } from "lucide-react";
 import axios from "axios";
 import {
   Dialog,
@@ -33,6 +33,15 @@ import { Input } from "@/components/ui/input";
 import { useToast } from "@/components/ui/use-toast";
 import SuccessMessage from "@/components/popupmsg/SuccessMessage";
 
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandInput, CommandItem, CommandEmpty, CommandList } from "@/components/ui/command";
+import { Badge } from "@/components/ui/badge";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Checkbox } from "@/components/ui/checkbox";
+
+const SUBJECTS_URL = "http://localhost/spcc_database/subjects.php";
+const SECTION_SUBJECTS_URL = "http://localhost/spcc_database/section_subjects.php";
+
 const formSchema = z.object({
   section_name: z
     .string({ required_error: "Please enter section name" })
@@ -51,6 +60,7 @@ const formSchema = z.object({
   strand: z
     .string({ required_error: "Please select a strand" })
     .max(10, "Strand must be less than 10 characters"),
+  subjects: z.array(z.number()).default([]),
 });
 
 interface Section {
@@ -82,6 +92,15 @@ interface Room {
   capacity: number;
 }
 
+type Subject = {
+  id: number;
+  code?: string;
+  name: string;
+  strand?: string;
+  grade_level?: string | number;
+  units?: number;
+};
+
 const SectionForm: React.FC<SectionFormProps> = ({
   open = false,
   onOpenChange,
@@ -91,10 +110,15 @@ const SectionForm: React.FC<SectionFormProps> = ({
 }) => {
   const [rooms, setRooms] = useState<Room[]>([]);
   const [loading, setLoading] = useState(false);
+  const [assigning, setAssigning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showSuccess, setShowSuccess] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
   const { toast } = useToast();
+
+  const [allSubjects, setAllSubjects] = useState<Subject[]>([]);
+  const [subjectsOpen, setSubjectsOpen] = useState(false);
+  const [subjectsSearch, setSubjectsSearch] = useState("");
 
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
@@ -103,9 +127,11 @@ const SectionForm: React.FC<SectionFormProps> = ({
       grade_level: "11",
       number_of_students: "",
       strand: "",
+      subjects: [],
     },
   });
 
+  /** Load form defaults and existing assignments (best-effort) */
   useEffect(() => {
     const values = editingSection
       ? {
@@ -116,28 +142,169 @@ const SectionForm: React.FC<SectionFormProps> = ({
               ? String(editingSection.number_of_students)
               : "",
           strand: editingSection.strand ?? "",
+          subjects: [], // will be loaded below
         }
       : {
           section_name: "",
           grade_level: "11",
           number_of_students: "",
           strand: "",
+          subjects: [],
         };
 
     if (open) {
       form.reset(values);
-    }
-  }, [editingSection, open, form]);
 
+      // If editing, try to fetch current subject assignments
+      if (editingSection?.section_id) {
+        axios
+          .get(SECTION_SUBJECTS_URL, {
+            params: { section_id: editingSection.section_id },
+          })
+          .then((res) => {
+            const ids: number[] =
+              res?.data?.subject_ids ||
+              res?.data?.subjects?.map((s: any) => Number(s.id)) ||
+              [];
+            if (Array.isArray(ids)) {
+              form.setValue(
+                "subjects",
+                ids.filter((x) => typeof x === "number" && !isNaN(x))
+              );
+            }
+          })
+          .catch(() => {
+            // Silent — not all backends expose this; user can still pick manually
+          });
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editingSection, open]);
+
+  /** Fetch subjects when open OR when grade_level/strand changes */
+  const watchGrade = form.watch("grade_level");
+  const watchStrand = form.watch("strand");
+
+  useEffect(() => {
+    if (!open) return;
+
+    const controller = new AbortController();
+
+    const fetchSubjects = async () => {
+      try {
+        const params: any = {};
+        if (watchGrade) params.grade_level = watchGrade;
+        if (watchStrand) params.strand = watchStrand;
+
+        const res = await axios.get(SUBJECTS_URL, { params, signal: controller.signal });
+        // Normalize incoming shape
+        const raw = Array.isArray(res.data) ? res.data : (res.data?.data || []);
+        const list: Subject[] = raw.map((row: any) => {
+          const id = Number(row.subj_id ?? row.subject_id ?? row.id ?? row.ID);
+          const code = (row.subj_code ?? row.subject_code ?? row.code ?? "").toString().trim();
+          const name =
+            (row.subj_name ??
+              row.subject_name ??
+              row.name ??
+              row.title ??
+              row.subj_description ??
+              row.description ??
+              "").toString().trim() || code || (id ? `Subject ${id}` : "Untitled");
+
+          return {
+            id,
+            code: code || undefined,
+            name,
+            strand: row.strand ?? row.track ?? undefined,
+            grade_level: row.grade_level ?? row.grade ?? undefined,
+            units: row.units != null ? Number(row.units) : undefined,
+          };
+        });
+
+        // keep only rows with a valid numeric id
+        setAllSubjects(list.filter((s) => Number.isFinite(s.id)));
+
+      } catch (e) {
+        // keep previous list; show a toast to inform
+        toast({
+          title: "Couldn’t load subjects",
+          description: "The subject list failed to load. You can try again or continue.",
+          variant: "destructive",
+        });
+      }
+    };
+
+    fetchSubjects();
+    return () => controller.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, watchGrade, watchStrand]);
+
+  /** Derived views */
+  const selectedSubjectIds = form.watch("subjects");
+  const selectedSubjects = useMemo(
+    () => allSubjects.filter((s) => selectedSubjectIds.includes(s.id)),
+    [allSubjects, selectedSubjectIds]
+  );
+
+  const toggleSubject = (id: number) => {
+    const current = form.getValues("subjects");
+    if (current.includes(id)) {
+      form.setValue(
+        "subjects",
+        current.filter((x) => x !== id),
+        { shouldDirty: true, shouldValidate: true }
+      );
+    } else {
+      form.setValue("subjects", [...current, id], {
+        shouldDirty: true,
+        shouldValidate: true,
+      });
+    }
+  };
+
+  const clearAllSubjects = () =>
+    form.setValue("subjects", [], { shouldDirty: true, shouldValidate: true });
+
+  /** Helper: assign subjects after create/update */
+  const upsertSectionSubjects = async (sectionId: number, ids: number[]) => {
+    try {
+      setAssigning(true);
+      const method = editingSection ? "put" : "post";
+      const res = await axios[method](SECTION_SUBJECTS_URL, {
+        section_id: sectionId,
+        subject_ids: ids,
+      });
+      const ok =
+        res?.data?.success ||
+        res?.data?.status === "success" ||
+        res?.status === 200 ||
+        res?.status === 201;
+      if (!ok) throw new Error(res?.data?.message || "Assigning subjects failed");
+      return true;
+    } catch (e: any) {
+      toast({
+        title: "Subject assignment failed",
+        description:
+          e?.message ||
+          "We saved the section, but assigning subjects ran into an issue. You can retry in the section page.",
+        variant: "destructive",
+      });
+      return false;
+    } finally {
+      setAssigning(false);
+    }
+  };
+
+  /** Submit */
   const handleSubmit = async (values: z.infer<typeof formSchema>) => {
     setLoading(true);
     setError(null);
 
     try {
+      // Duplicate guard
       const isDuplicate = sections.some(
         (section) =>
-          section.section_name.toLowerCase() ===
-            values.section_name.toLowerCase() &&
+          section.section_name.toLowerCase() === values.section_name.toLowerCase() &&
           (!editingSection || section.section_id !== editingSection.section_id)
       );
       if (isDuplicate) {
@@ -145,49 +312,47 @@ const SectionForm: React.FC<SectionFormProps> = ({
         return;
       }
 
-      const sectionData = { ...values };
+      const { subjects, ...sectionPayload } = values;
       let response;
 
       if (editingSection) {
         response = await axios.put(
           `http://localhost/spcc_database/sections.php?id=${editingSection.section_id}`,
-          sectionData
+          sectionPayload
         );
       } else {
-        response = await axios.post(
-          "http://localhost/spcc_database/sections.php",
-          sectionData
-        );
+        response = await axios.post("http://localhost/spcc_database/sections.php", sectionPayload);
       }
 
-      if (
+      // Consider 2xx success (your backend can be inconsistent in the shape)
+      const ok =
         response?.data?.success ||
         response?.data?.status === "success" ||
         response?.data?.message?.toString()?.toLowerCase()?.includes("success") ||
-        response?.status === 200 ||
-        response?.status === 201
-      ) {
-        setSuccessMessage(
-          `Section ${editingSection ? "updated" : "created"} successfully`
-        );
-        setShowSuccess(true);
-        onSectionAdded?.();
-        onOpenChange?.(false);
-      } else {
-        // If the backend is inconsistent, treat 2xx as success
-        if (response?.status && response.status >= 200 && response.status < 300) {
-          setSuccessMessage(
-            `Section ${editingSection ? "updated" : "created"} successfully`
-          );
-          setShowSuccess(true);
-          onSectionAdded?.();
-          onOpenChange?.(false);
-        } else {
-          throw new Error(
-            response?.data?.message || "Failed to save the section"
-          );
-        }
+        (response?.status && response.status >= 200 && response.status < 300);
+
+      if (!ok) {
+        throw new Error(response?.data?.message || "Failed to save the section");
       }
+
+      // Get section_id (from response or editingSection)
+      const sectionId: number =
+        Number(
+          response?.data?.section_id ??
+            response?.data?.id ??
+            response?.data?.data?.section_id ??
+            response?.data?.data?.id
+        ) || Number(editingSection?.section_id);
+
+      // Assign subjects if any and we have an id
+      if (sectionId && Array.isArray(subjects)) {
+        await upsertSectionSubjects(sectionId, subjects);
+      }
+
+      setSuccessMessage(`Section ${editingSection ? "updated" : "created"} successfully`);
+      setShowSuccess(true);
+      onSectionAdded?.();
+      onOpenChange?.(false);
     } catch (err) {
       const errorMessage =
         err instanceof Error ? err.message : "Unknown error saving section";
@@ -205,14 +370,11 @@ const SectionForm: React.FC<SectionFormProps> = ({
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent
-          className="sm:max-w-[425px]"
-          // ✅ forces a fresh mount per record; great when fields get “sticky”
+          className="sm:max-w-[520px]"
           key={editingSection ? editingSection.section_id : "new"}
         >
           <DialogHeader>
-            <DialogTitle>
-              {editingSection ? "Edit Section" : "Add New Section"}
-            </DialogTitle>
+            <DialogTitle>{editingSection ? "Edit Section" : "Add New Section"}</DialogTitle>
             <DialogDescription>
               {editingSection
                 ? "Update the section information below."
@@ -244,53 +406,55 @@ const SectionForm: React.FC<SectionFormProps> = ({
                 )}
               />
 
-              <FormField
-                control={form.control}
-                name="grade_level"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Grade Level</FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value}>
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select grade level" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        <SelectItem value="11">Grade 11</SelectItem>
-                        <SelectItem value="12">Grade 12</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <FormField
+                  control={form.control}
+                  name="grade_level"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Grade Level</FormLabel>
+                      <Select onValueChange={field.onChange} value={field.value}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select grade level" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="11">Grade 11</SelectItem>
+                          <SelectItem value="12">Grade 12</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
 
-              <FormField
-                control={form.control}
-                name="strand"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Strand</FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value}>
-                      <FormControl>
-                        <SelectTrigger>
+                <FormField
+                  control={form.control}
+                  name="strand"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Strand</FormLabel>
+                      <Select onValueChange={field.onChange} value={field.value}>
+                        <FormControl>
+                          <SelectTrigger>
                           <SelectValue placeholder="Select strand" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        <SelectItem value="STEM">STEM</SelectItem>
-                        <SelectItem value="HUMSS">HUMSS</SelectItem>
-                        <SelectItem value="GAS">GAS</SelectItem>
-                        <SelectItem value="ABM">ABM</SelectItem>
-                        <SelectItem value="TVL">TVL</SelectItem>
-                        <SelectItem value="ICT">ICT</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="STEM">STEM</SelectItem>
+                          <SelectItem value="HUMSS">HUMSS</SelectItem>
+                          <SelectItem value="GAS">GAS</SelectItem>
+                          <SelectItem value="ABM">ABM</SelectItem>
+                          <SelectItem value="TVL">TVL</SelectItem>
+                          <SelectItem value="ICT">ICT</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
 
               <FormField
                 control={form.control}
@@ -302,11 +466,75 @@ const SectionForm: React.FC<SectionFormProps> = ({
                       <Input
                         type="number"
                         placeholder="Enter number of students"
-                        // keep it as string for the schema; coerce on submit if needed
                         {...field}
                         onChange={(e) => field.onChange(e.target.value)}
                       />
                     </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="subjects"
+                render={() => (
+                  <FormItem>
+                    <FormLabel>Assign Subjects</FormLabel>
+
+                    {allSubjects.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">
+                        No subjects available for this grade level and strand.
+                      </p>
+                    ) : (
+                      <div className="max-h-[220px] overflow-y-auto border rounded-md p-3 space-y-2">
+                        {allSubjects.map((subject) => {
+                          const checked = form.watch("subjects").includes(subject.id);
+                          return (
+                            <div
+                              key={subject.id}
+                              className="flex items-start space-x-2 border-b border-muted/30 pb-2 last:border-0 last:pb-0"
+                            >
+                              <input
+                                id={`subject-${subject.id}`}
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() => {
+                                  const selected = form.getValues("subjects");
+                                  if (checked) {
+                                    form.setValue(
+                                      "subjects",
+                                      selected.filter((id) => id !== subject.id)
+                                    );
+                                  } else {
+                                    form.setValue("subjects", [...selected, subject.id]);
+                                  }
+                                }}
+                                className="mt-[2px] h-4 w-4 accent-primary"
+                              />
+                              <label
+                                htmlFor={`subject-${subject.id}`}
+                                className="flex-1 text-sm leading-tight cursor-pointer"
+                              >
+                                <span className="font-medium">
+                                  {subject.subj_code || subject.code || `Subject ${subject.id}`}
+                                </span>
+                                <br />
+                                <span className="text-muted-foreground text-xs">
+                                  {subject.subj_name || subject.name}
+                                  {subject.strand ? ` • ${subject.strand}` : ""}
+                                  {subject.grade_level ? ` • Grade ${subject.grade_level}` : ""}
+                                </span>
+                              </label>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    <p className="text-[11px] text-muted-foreground mt-2">
+                      List automatically filters by grade level and strand.
+                    </p>
                     <FormMessage />
                   </FormItem>
                 )}
@@ -317,13 +545,15 @@ const SectionForm: React.FC<SectionFormProps> = ({
                   type="button"
                   variant="outline"
                   onClick={() => onOpenChange?.(false)}
-                  disabled={loading}
+                  disabled={loading || assigning}
                 >
                   Cancel
                 </Button>
-                <Button type="submit" disabled={loading}>
-                  {loading
-                    ? "Saving..."
+                <Button type="submit" disabled={loading || assigning}>
+                  {loading || assigning
+                    ? editingSection
+                      ? "Saving…"
+                      : "Creating…"
                     : editingSection
                     ? "Save Changes"
                     : "Create Section"}
