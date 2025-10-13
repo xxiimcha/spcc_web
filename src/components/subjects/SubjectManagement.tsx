@@ -41,8 +41,6 @@ import {
 import { toast } from "@/components/ui/use-toast";
 import SubjectForm from "./SubjectForm";
 import BulkUploadForm from "./BulkUploadForm";
-
-// NEW: shadcn Selects for filters
 import {
   Select,
   SelectContent,
@@ -50,14 +48,20 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-
-// NEW: shadcn Tabs for course/strand tabs
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+// NEW: checkbox for row & header selection
+import { Checkbox } from "@/components/ui/checkbox";
+// NEW: alert dialog for batch delete confirm
 import {
-  Tabs,
-  TabsList,
-  TabsTrigger,
-  TabsContent,
-} from "@/components/ui/tabs";
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 interface Subject {
   id: string;
@@ -65,10 +69,10 @@ interface Subject {
   name: string;
   description?: string;
   units?: number;
-  type?: string;          // e.g., "Core", "Applied", etc.
+  type?: string;
   hoursPerWeek?: number;
-  gradeLevel?: string;    // e.g., "11", "12"
-  strand?: string;        // used as "course" tabs here
+  gradeLevel?: string;
+  strand?: string;
   schedule_count?: number;
 }
 
@@ -87,7 +91,6 @@ interface AssignedProfessor extends Professor {
 
 const PAGE_SIZES = [10, 25, 50];
 
-// NEW: type for sortable keys
 type SortKey =
   | "code"
   | "name"
@@ -108,6 +111,8 @@ const SubjectManagement = () => {
   const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  // NEW: batch delete confirm
+  const [isBatchDeleteOpen, setIsBatchDeleteOpen] = useState(false);
 
   const [currentSubject, setCurrentSubject] = useState<Subject | null>(null);
   const [assignedProfessors, setAssignedProfessors] = useState<AssignedProfessor[]>([]);
@@ -129,9 +134,12 @@ const SubjectManagement = () => {
   // Tabs by course (strand)
   const [activeCourse, setActiveCourse] = useState<string>("__ALL__");
 
-  // NEW: sorting state
+  // sorting
   const [sortKey, setSortKey] = useState<SortKey>("code");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+
+  // NEW: selection state
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   // Fetch subjects
   const fetchSubjects = async () => {
@@ -153,6 +161,8 @@ const SubjectManagement = () => {
         }));
         setSubjects(mappedSubjects);
         setError(null);
+        // clear selection on refetch so we don't keep stale ids
+        setSelectedIds(new Set());
       } else {
         throw new Error(response.message || "Failed to fetch subjects");
       }
@@ -160,6 +170,7 @@ const SubjectManagement = () => {
       const errorMessage = err instanceof Error ? err.message : String(err);
       setError(`Failed to fetch subjects: ${errorMessage}`);
       setSubjects([]);
+      setSelectedIds(new Set());
     } finally {
       setIsLoading(false);
     }
@@ -238,12 +249,10 @@ const SubjectManagement = () => {
     return subjects.filter((subject) => {
       if (!subject) return false;
 
-      // Tabs: by strand (course)
       if (activeCourse !== "__ALL__") {
         if (!subject.strand || String(subject.strand) !== activeCourse) return false;
       }
 
-      // Search
       const matchSearch =
         !q ||
         (subject.code && subject.code.toLowerCase().includes(q)) ||
@@ -251,40 +260,31 @@ const SubjectManagement = () => {
         (subject.description && subject.description.toLowerCase().includes(q));
       if (!matchSearch) return false;
 
-      // Type filter
       if (filterType && (!subject.type || String(subject.type) !== filterType)) return false;
-
-      // Grade filter
       if (filterGrade && (!subject.gradeLevel || String(subject.gradeLevel) !== filterGrade)) return false;
 
       return true;
     });
   }, [subjects, searchQuery, filterType, filterGrade, activeCourse]);
 
-  // NEW: sorting (after filtering, before pagination)
+  // sorting
   const sortedSubjects = useMemo(() => {
     const arr = [...filteredSubjects];
-
     const getVal = (s: Subject, key: SortKey) => {
       const v = (s as any)[key];
-      // normalize for sorting: numbers stay numbers; strings lowercased; null/undefined => empty
       if (v === null || v === undefined) return "";
       if (typeof v === "number") return v;
       return String(v).toLowerCase();
     };
-
     arr.sort((a, b) => {
       const va = getVal(a, sortKey);
       const vb = getVal(b, sortKey);
-
-      // mixed types safe compare
       if (typeof va === "number" && typeof vb === "number") {
         return sortDir === "asc" ? va - vb : vb - va;
       }
       const res = String(va).localeCompare(String(vb), undefined, { numeric: true, sensitivity: "base" });
       return sortDir === "asc" ? res : -res;
     });
-
     return arr;
   }, [filteredSubjects, sortKey, sortDir]);
 
@@ -305,6 +305,47 @@ const SubjectManagement = () => {
   const gotoNext = () => setCurrentPage((p) => Math.min(totalPages, p + 1));
   const gotoLast = () => setCurrentPage(totalPages);
 
+  // NEW: selection helpers
+  const pageIds = useMemo(() => paginatedSubjects.map((s) => s.id), [paginatedSubjects]);
+  const allSelectedOnPage = pageIds.length > 0 && pageIds.every((id) => selectedIds.has(id));
+  const someSelectedOnPage = pageIds.some((id) => selectedIds.has(id)) && !allSelectedOnPage;
+  const totalSelected = selectedIds.size;
+
+  const toggleRow = (id: string, checked: boolean | "indeterminate") => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAllOnPage = (checked: boolean | "indeterminate") => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (checked) {
+        pageIds.forEach((id) => next.add(id));
+      } else {
+        pageIds.forEach((id) => next.delete(id));
+      }
+      return next;
+    });
+  };
+
+  const clearSelection = () => setSelectedIds(new Set());
+
+  // --- NEW: preview memos for batch delete ---
+  const selectedSubjects = useMemo(
+    () => subjects.filter((s) => selectedIds.has(s.id)),
+    [subjects, selectedIds]
+  );
+
+  const scheduledSelectedCount = useMemo(
+    () => selectedSubjects.filter((s) => (s.schedule_count ?? 0) > 0).length,
+    [selectedSubjects]
+  );
+  // --- END NEW ---
+
   // Manual add submit
   const handleAddSubject = async (data: Omit<Subject, "id">) => {
     try {
@@ -312,7 +353,6 @@ const SubjectManagement = () => {
         toast({ variant: "destructive", title: "Missing grade level", description: "Grade level is required." });
         return;
       }
-
       const subjectData = {
         subj_code: data.code,
         subj_name: data.name,
@@ -321,7 +361,6 @@ const SubjectManagement = () => {
         strand: data.strand ?? "",
         grade_level: data.gradeLevel,
       };
-
       const response = await apiService.createSubject(subjectData);
       if (response.success || response.status === "success") {
         await fetchSubjects();
@@ -344,7 +383,6 @@ const SubjectManagement = () => {
         toast({ variant: "destructive", title: "Missing grade level", description: "Grade level is required." });
         return;
       }
-
       const subjectData = {
         subj_code: data.code,
         subj_name: data.name,
@@ -353,7 +391,6 @@ const SubjectManagement = () => {
         strand: data.strand ?? "",
         grade_level: data.gradeLevel,
       };
-
       const response = await apiService.updateSubject(Number(currentSubject.id), subjectData);
       if (response.success || response.status === "success") {
         await fetchSubjects();
@@ -379,7 +416,6 @@ const SubjectManagement = () => {
       });
       return;
     }
-
     try {
       setIsUploading(true);
       const form = new FormData();
@@ -437,6 +473,38 @@ const SubjectManagement = () => {
     }
   };
 
+  // NEW: batch delete handler (uses bulk endpoint if available, else per-id)
+  const handleBatchDelete = async () => {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) {
+      setIsBatchDeleteOpen(false);
+      return;
+    }
+    try {
+      // Try bulk endpoint first if present
+      if (typeof (apiService as any).bulkDeleteSubjects === "function") {
+        const resp = await (apiService as any).bulkDeleteSubjects({ ids: ids.map(Number) });
+        if (!resp?.success) throw new Error(resp?.message || "Bulk delete failed");
+      } else {
+        // Fallback: delete sequentially (or Promise.all)
+        await Promise.all(ids.map((id) => apiService.deleteSubject(Number(id))));
+      }
+      toast({
+        title: "Deleted",
+        description: `Successfully deleted ${ids.length} subject${ids.length > 1 ? "s" : ""}.`,
+      });
+      setIsBatchDeleteOpen(false);
+      clearSelection();
+      await fetchSubjects();
+    } catch (err) {
+      toast({
+        variant: "destructive",
+        title: "Delete failed",
+        description: err instanceof Error ? err.message : String(err),
+      });
+    }
+  };
+
   const openEditDialog = (subject: Subject) => {
     setCurrentSubject(subject);
     setIsEditDialogOpen(true);
@@ -452,20 +520,18 @@ const SubjectManagement = () => {
     setSearchQuery("");
   };
 
-  // NEW: helper to toggle sorting
+  // sorting toggle
   const toggleSort = (key: SortKey) => {
     setSortKey((prevKey) => {
       if (prevKey !== key) {
         setSortDir("asc");
         return key;
       }
-      // same key: flip direction
       setSortDir((prevDir) => (prevDir === "asc" ? "desc" : "asc"));
       return prevKey;
     });
   };
 
-  // NEW: header renderer
   const SortableHeader: React.FC<{ label: string; column: SortKey; className?: string }> = ({
     label,
     column,
@@ -494,25 +560,35 @@ const SubjectManagement = () => {
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between mb-6">
         <h1 className="text-2xl font-bold">Subject Management</h1>
 
-        {/* Dropdown Add Button */}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button>
-              <PlusCircle className="mr-2 h-4 w-4" />
-              Add Subject
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-52">
-            <DropdownMenuItem onClick={() => setIsAddDialogOpen(true)}>
-              Manual add
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => setIsBulkDialogOpen(true)}>
-              <Upload className="mr-2 h-4 w-4" />
-              Bulk Upload (Excel)
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <div className="flex gap-2">
+          {/* NEW: Batch delete button */}
+          <Button
+            variant="destructive"
+            disabled={totalSelected === 0 || isLoading}
+            onClick={() => setIsBatchDeleteOpen(true)}
+          >
+            <Trash2 className="mr-2 h-4 w-4" />
+            Delete ({totalSelected})
+          </Button>
+
+          {/* Dropdown Add Button */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button>
+                <PlusCircle className="mr-2 h-4 w-4" />
+                Add Subject
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-52">
+              <DropdownMenuItem onClick={() => setIsAddDialogOpen(true)}>Manual add</DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => setIsBulkDialogOpen(true)}>
+                <Upload className="mr-2 h-4 w-4" />
+                Bulk Upload (Excel)
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
       </div>
 
       {/* Tabs by Course (strand) */}
@@ -539,10 +615,7 @@ const SubjectManagement = () => {
           </div>
 
           {/* Type filter */}
-          <Select
-            value={filterType}
-            onValueChange={(v) => setFilterType(v === "__ALL__" ? "" : v)}
-          >
+          <Select value={filterType} onValueChange={(v) => setFilterType(v === "__ALL__" ? "" : v)}>
             <SelectTrigger className="w-full">
               <SelectValue placeholder="All types" />
             </SelectTrigger>
@@ -557,10 +630,7 @@ const SubjectManagement = () => {
           </Select>
 
           {/* Grade level filter */}
-          <Select
-            value={filterGrade}
-            onValueChange={(v) => setFilterGrade(v === "__ALL__" ? "" : v)}
-          >
+          <Select value={filterGrade} onValueChange={(v) => setFilterGrade(v === "__ALL__" ? "" : v)}>
             <SelectTrigger className="w-full">
               <SelectValue placeholder="All grade levels" />
             </SelectTrigger>
@@ -575,10 +645,7 @@ const SubjectManagement = () => {
           </Select>
 
           {/* Page size */}
-          <Select
-            value={String(pageSize)}
-            onValueChange={(v) => setPageSize(Number(v))}
-          >
+          <Select value={String(pageSize)} onValueChange={(v) => setPageSize(Number(v))}>
             <SelectTrigger className="w-full">
               <SelectValue placeholder="Rows per page" />
             </SelectTrigger>
@@ -600,11 +667,7 @@ const SubjectManagement = () => {
         </div>
 
         <TabsContent value={activeCourse} className="mt-4">
-          {error && (
-            <div className="bg-red-50 text-red-700 p-4 mb-6 rounded-md border border-red-200">
-              {error}
-            </div>
-          )}
+          {error && <div className="bg-red-50 text-red-700 p-4 mb-6 rounded-md border border-red-200">{error}</div>}
 
           {isLoading ? (
             <div className="text-center py-10">Loading subjects...</div>
@@ -614,6 +677,14 @@ const SubjectManagement = () => {
                 <Table>
                   <TableHeader>
                     <TableRow>
+                      {/* NEW: header checkbox */}
+                      <TableHead className="w-[44px]">
+                        <Checkbox
+                          checked={allSelectedOnPage ? true : someSelectedOnPage ? "indeterminate" : false}
+                          onCheckedChange={toggleSelectAllOnPage}
+                          aria-label="Select all on this page"
+                        />
+                      </TableHead>
                       <TableHead>
                         <SortableHeader label="Code" column="code" />
                       </TableHead>
@@ -638,16 +709,22 @@ const SubjectManagement = () => {
                       <TableHead className="hidden lg:table-cell">
                         <SortableHeader label="#Schedules" column="schedule_count" />
                       </TableHead>
-                      <TableHead className="hidden 2xl:table-cell max-w-[320px]">
-                        Description
-                      </TableHead>
+                      <TableHead className="hidden 2xl:table-cell max-w-[320px]">Description</TableHead>
                       <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {paginatedSubjects.length > 0 ? (
                       paginatedSubjects.map((subject) => (
-                        <TableRow key={subject.id}>
+                        <TableRow key={subject.id} data-selected={selectedIds.has(subject.id)}>
+                          {/* NEW: row checkbox */}
+                          <TableCell className="w-[44px]">
+                            <Checkbox
+                              checked={selectedIds.has(subject.id)}
+                              onCheckedChange={(v) => toggleRow(subject.id, v)}
+                              aria-label={`Select ${subject.code}`}
+                            />
+                          </TableCell>
                           <TableCell className="font-medium">{subject.code}</TableCell>
                           <TableCell>{subject.name}</TableCell>
                           <TableCell className="hidden md:table-cell">{subject.strand || "-"}</TableCell>
@@ -676,7 +753,7 @@ const SubjectManagement = () => {
                       ))
                     ) : (
                       <TableRow>
-                        <TableCell colSpan={10} className="text-center py-6">
+                        <TableCell colSpan={11} className="text-center py-6">
                           {sortedSubjects.length === 0 ? "No subjects found" : "No subjects on this page"}
                         </TableCell>
                       </TableRow>
@@ -688,16 +765,20 @@ const SubjectManagement = () => {
               {/* Footer: counts + pagination */}
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mt-4">
                 <div className="text-sm text-muted-foreground">
-                  Showing{" "}
-                  <span className="font-medium">{totalItems === 0 ? 0 : pageStartIndex + 1}</span>
-                  –<span className="font-medium">{pageEndIndex}</span> of{" "}
+                  Showing <span className="font-medium">{totalItems === 0 ? 0 : pageStartIndex + 1}</span>–
+                  <span className="font-medium">{pageEndIndex}</span> of{" "}
                   <span className="font-medium">{totalItems}</span> subjects
-                  {(searchQuery || filterType || filterGrade || activeCourse !== "__ALL__") ? (
+                  {searchQuery || filterType || filterGrade || activeCourse !== "__ALL__" ? (
                     <span>
                       {" "}
                       (filtered from <span className="font-medium">{subjects.length}</span>)
                     </span>
                   ) : null}
+                  {totalSelected > 0 && (
+                    <span className="ml-2">
+                      • <span className="font-medium">{totalSelected}</span> selected
+                    </span>
+                  )}
                 </div>
 
                 <div className="flex items-center gap-2">
@@ -817,7 +898,7 @@ const SubjectManagement = () => {
         </Dialog>
       )}
 
-      {/* Delete Confirmation Dialog */}
+      {/* Single Delete Confirmation Dialog */}
       <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
         <DialogContent className="sm:max-w-[425px] bg-white">
           <DialogHeader>
@@ -843,6 +924,73 @@ const SubjectManagement = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* NEW: Batch Delete Confirmation with PREVIEW */}
+      <AlertDialog open={isBatchDeleteOpen} onOpenChange={setIsBatchDeleteOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Delete {totalSelected} selected item{totalSelected > 1 ? "s" : ""}?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete the selected subject{totalSelected > 1 ? "s" : ""}. This action cannot be
+              undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+
+          {/* PREVIEW LIST */}
+          {selectedSubjects.length > 0 ? (
+            <div className="mt-3">
+              <div className="text-sm mb-2 text-muted-foreground">Preview of items to be deleted:</div>
+              <div className="max-h-60 overflow-auto rounded-md border">
+                <ul className="divide-y">
+                  {selectedSubjects.slice(0, 50).map((s) => (
+                    <li key={s.id} className="p-2 text-sm flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="truncate">
+                          <span className="font-medium">{s.code}</span>{" "}
+                          <span className="text-muted-foreground">—</span>{" "}
+                          <span className="">{s.name}</span>
+                        </div>
+                        <div className="text-xs text-muted-foreground truncate">
+                          {(s.strand || "-")} · Grade {(s.gradeLevel || "-")} · Type {(s.type || "-")}
+                        </div>
+                      </div>
+                      <div className="shrink-0 text-xs text-muted-foreground">
+                        {(s.schedule_count ?? 0)} sched{(s.schedule_count ?? 0) === 1 ? "" : "s"}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              {selectedSubjects.length > 50 && (
+                <div className="text-xs text-muted-foreground mt-2">
+                  +{selectedSubjects.length - 50} more not shown…
+                </div>
+              )}
+
+              {/* Warning if any selected has schedules */}
+              {scheduledSelectedCount > 0 && (
+                <div className="mt-3 text-sm rounded-md border border-amber-300 bg-amber-50 text-amber-900 p-2">
+                  <span className="font-medium">{scheduledSelectedCount}</span>{" "}
+                  of the selected item{scheduledSelectedCount > 1 ? "s have" : " has"} existing schedule
+                  {scheduledSelectedCount > 1 ? "s" : ""}. Deleting them may orphan related data.
+                </div>
+              )}
+            </div>
+          ) : null}
+
+          <AlertDialogFooter className="mt-4">
+            <AlertDialogCancel onClick={() => setIsBatchDeleteOpen(false)}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-white hover:bg-destructive/90"
+              onClick={handleBatchDelete}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Bulk Upload Dialog */}
       <BulkUploadForm
