@@ -10,9 +10,8 @@ import {
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
-  ArrowUpDown,
+  ArrowUpDown, // NEW: sort indicator
 } from "lucide-react";
-import type { CheckedState } from "@radix-ui/react-checkbox";
 import { apiService } from "@/services/apiService";
 import {
   Table,
@@ -50,7 +49,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+// NEW: checkbox for row & header selection
 import { Checkbox } from "@/components/ui/checkbox";
+// NEW: alert dialog for batch delete confirm
 import {
   AlertDialog,
   AlertDialogAction,
@@ -88,7 +89,7 @@ interface AssignedProfessor extends Professor {
   scheduleInfo?: string;
 }
 
-const PAGE_SIZES = [10, 25, 50] as const;
+const PAGE_SIZES = [10, 25, 50];
 
 type SortKey =
   | "code"
@@ -110,6 +111,7 @@ const SubjectManagement = () => {
   const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  // NEW: batch delete confirm
   const [isBatchDeleteOpen, setIsBatchDeleteOpen] = useState(false);
 
   const [currentSubject, setCurrentSubject] = useState<Subject | null>(null);
@@ -121,25 +123,25 @@ const SubjectManagement = () => {
   // bulk upload
   const [isUploading, setIsUploading] = useState(false);
 
-  // pagination
+  // PAGINATION (client-side)
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState<number>(PAGE_SIZES[0]);
 
-  // filters
+  // Filters
   const [filterType, setFilterType] = useState<string>("");
   const [filterGrade, setFilterGrade] = useState<string>("");
 
-  // tabs
+  // Tabs by course (strand)
   const [activeCourse, setActiveCourse] = useState<string>("__ALL__");
 
   // sorting
   const [sortKey, setSortKey] = useState<SortKey>("code");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
-  // selection
+  // NEW: selection state
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
-  // fetch
+  // Fetch subjects
   const fetchSubjects = async () => {
     try {
       setIsLoading(true);
@@ -155,10 +157,11 @@ const SubjectManagement = () => {
           hoursPerWeek: subject.subj_hours_per_week ?? subject.hoursPerWeek ?? undefined,
           gradeLevel: subject.grade_level || subject.gradeLevel || "",
           strand: subject.strand || "",
-          schedule_count: Number(subject.schedule_count ?? 0),
+          schedule_count: subject.schedule_count || 0,
         }));
         setSubjects(mappedSubjects);
         setError(null);
+        // clear selection on refetch so we don't keep stale ids
         setSelectedIds(new Set());
       } else {
         throw new Error(response.message || "Failed to fetch subjects");
@@ -173,7 +176,7 @@ const SubjectManagement = () => {
     }
   };
 
-  // assigned profs
+  // Fetch assigned professors
   const fetchAssignedProfessors = async (subjectId: string) => {
     try {
       setIsLoadingAssignments(true);
@@ -205,7 +208,9 @@ const SubjectManagement = () => {
       toast({
         variant: "destructive",
         title: "Error",
-        description: `Failed to load assigned professors: ${err instanceof Error ? err.message : String(err)}`,
+        description: `Failed to load assigned professors: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
       });
       setAssignedProfessors([]);
     } finally {
@@ -217,7 +222,7 @@ const SubjectManagement = () => {
     fetchSubjects();
   }, []);
 
-  // options
+  // Build option lists from current subjects
   const courseTabs = useMemo(() => {
     const set = new Set<string>();
     subjects.forEach((s) => s.strand && set.add(String(s.strand)));
@@ -238,7 +243,7 @@ const SubjectManagement = () => {
     return allNum ? arr.sort((a, b) => Number(a) - Number(b)) : arr.sort((a, b) => a.localeCompare(b));
   }, [subjects]);
 
-  // filtering
+  // Filter logic (tab + search + filters)
   const filteredSubjects = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     return subjects.filter((subject) => {
@@ -283,11 +288,12 @@ const SubjectManagement = () => {
     return arr;
   }, [filteredSubjects, sortKey, sortDir]);
 
-  // pagination
+  // Reset to page 1 when search, page size, filters, tab, or sort change
   useEffect(() => {
     setCurrentPage(1);
   }, [searchQuery, pageSize, filterType, filterGrade, activeCourse, sortKey, sortDir]);
 
+  // Pagination
   const totalItems = sortedSubjects.length;
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
   const pageStartIndex = (currentPage - 1) * pageSize;
@@ -299,26 +305,25 @@ const SubjectManagement = () => {
   const gotoNext = () => setCurrentPage((p) => Math.min(totalPages, p + 1));
   const gotoLast = () => setCurrentPage(totalPages);
 
-  // selection helpers
+  // NEW: selection helpers
   const pageIds = useMemo(() => paginatedSubjects.map((s) => s.id), [paginatedSubjects]);
   const allSelectedOnPage = pageIds.length > 0 && pageIds.every((id) => selectedIds.has(id));
   const someSelectedOnPage = pageIds.some((id) => selectedIds.has(id)) && !allSelectedOnPage;
   const totalSelected = selectedIds.size;
 
-  const toggleRow = (id: string, checked: CheckedState) => {
+  const toggleRow = (id: string, checked: boolean | "indeterminate") => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
-      if (checked === true) next.add(id);
-      if (checked === false) next.delete(id);
+      if (checked) next.add(id);
+      else next.delete(id);
       return next;
     });
   };
 
-  const toggleSelectAllOnPage = (checked: CheckedState) => {
+  const toggleSelectAllOnPage = (checked: boolean | "indeterminate") => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
-      const shouldSelect = checked === true || checked === "indeterminate";
-      if (shouldSelect) {
+      if (checked) {
         pageIds.forEach((id) => next.add(id));
       } else {
         pageIds.forEach((id) => next.delete(id));
@@ -329,27 +334,20 @@ const SubjectManagement = () => {
 
   const clearSelection = () => setSelectedIds(new Set());
 
-  // --- preview data for batch delete ---
   const selectedSubjects = useMemo(
     () => subjects.filter((s) => selectedIds.has(s.id)),
     [subjects, selectedIds]
   );
 
   const scheduledSelectedCount = useMemo(
-    () => selectedSubjects.filter((s) => Number(s.schedule_count ?? 0) > 0).length,
+    () => selectedSubjects.filter((s) => (s.schedule_count ?? 0) > 0).length,
     [selectedSubjects]
   );
-  // -------------------------------------
 
-  // CRUD
   const handleAddSubject = async (data: Omit<Subject, "id">) => {
     try {
       if (!data.gradeLevel) {
-        toast({
-          variant: "destructive",
-          title: "Missing grade level",
-          description: "Grade level is required.",
-        });
+        toast({ variant: "destructive", title: "Missing grade level", description: "Grade level is required." });
         return;
       }
       const subjectData = {
@@ -370,14 +368,11 @@ const SubjectManagement = () => {
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
-      toast({
-        title: "Error",
-        description: `Failed to add subject: ${errorMessage}`,
-        variant: "destructive",
-      });
+      toast({ title: "Error", description: `Failed to add subject: ${errorMessage}`, variant: "destructive" });
     }
   };
 
+  // UPDATE
   const handleEditSubject = async (data: Omit<Subject, "id">) => {
     if (!currentSubject) return;
     try {
@@ -403,11 +398,44 @@ const SubjectManagement = () => {
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
+      toast({ title: "Error", description: `Failed to update subject: ${errorMessage}`, variant: "destructive" });
+    }
+  };
+
+  // Bulk upload submit
+  const handleBulkUpload = async (file: File) => {
+    const ext = file.name.toLowerCase().split(".").pop();
+    if (!["xlsx", "xls"].includes(ext || "")) {
       toast({
-        title: "Error",
-        description: `Failed to update subject: ${errorMessage}`,
         variant: "destructive",
+        title: "Invalid file",
+        description: "Only Excel files (.xlsx, .xls) are allowed.",
       });
+      return;
+    }
+    try {
+      setIsUploading(true);
+      const form = new FormData();
+      form.append("file", file, file.name);
+      const resp = await apiService.bulkUploadSubjects(form);
+      if (resp?.success) {
+        toast({
+          title: "Bulk upload complete",
+          description: resp.message || "Subjects processed successfully.",
+        });
+        setIsBulkDialogOpen(false);
+        await fetchSubjects();
+      } else {
+        throw new Error(resp?.message || "Bulk upload failed");
+      }
+    } catch (err) {
+      toast({
+        variant: "destructive",
+        title: "Upload failed",
+        description: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setIsUploading(false);
     }
   };
 
@@ -423,7 +451,10 @@ const SubjectManagement = () => {
       const response = await apiService.deleteSubject(Number(currentSubject.id));
       if (response.success) {
         await fetchSubjects();
-        toast({ title: "Success", description: response.message || "Subject deleted successfully" });
+        toast({
+          title: "Success",
+          description: response.message || "Subject deleted successfully",
+        });
       } else {
         throw new Error(response.message || "Failed to delete subject");
       }
@@ -439,6 +470,7 @@ const SubjectManagement = () => {
     }
   };
 
+  // NEW: batch delete handler (uses bulk endpoint if available, else per-id)
   const handleBatchDelete = async () => {
     const ids = Array.from(selectedIds);
     if (ids.length === 0) {
@@ -446,10 +478,12 @@ const SubjectManagement = () => {
       return;
     }
     try {
+      // Try bulk endpoint first if present
       if (typeof (apiService as any).bulkDeleteSubjects === "function") {
         const resp = await (apiService as any).bulkDeleteSubjects({ ids: ids.map(Number) });
         if (!resp?.success) throw new Error(resp?.message || "Bulk delete failed");
       } else {
+        // Fallback: delete sequentially (or Promise.all)
         await Promise.all(ids.map((id) => apiService.deleteSubject(Number(id))));
       }
       toast({
@@ -483,6 +517,7 @@ const SubjectManagement = () => {
     setSearchQuery("");
   };
 
+  // sorting toggle
   const toggleSort = (key: SortKey) => {
     setSortKey((prevKey) => {
       if (prevKey !== key) {
@@ -523,6 +558,7 @@ const SubjectManagement = () => {
         <h1 className="text-2xl font-bold">Subject Management</h1>
 
         <div className="flex gap-2">
+          {/* NEW: Batch delete button */}
           <Button
             variant="destructive"
             disabled={totalSelected === 0 || isLoading}
@@ -532,6 +568,7 @@ const SubjectManagement = () => {
             Delete ({totalSelected})
           </Button>
 
+          {/* Dropdown Add Button */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button>
@@ -551,6 +588,7 @@ const SubjectManagement = () => {
         </div>
       </div>
 
+      {/* Tabs by Course (strand) */}
       <Tabs value={activeCourse} onValueChange={setActiveCourse} className="mb-4">
         <TabsList className="w-full overflow-x-auto">
           <TabsTrigger value="__ALL__">All</TabsTrigger>
@@ -561,6 +599,7 @@ const SubjectManagement = () => {
           ))}
         </TabsList>
 
+        {/* Common controls above table (search + filters + page size) */}
         <div className="mt-4 flex flex-col gap-3 md:grid md:grid-cols-2 lg:grid-cols-5 items-start">
           <div className="relative col-span-2 w-full">
             <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -572,6 +611,7 @@ const SubjectManagement = () => {
             />
           </div>
 
+          {/* Type filter */}
           <Select value={filterType} onValueChange={(v) => setFilterType(v === "__ALL__" ? "" : v)}>
             <SelectTrigger className="w-full">
               <SelectValue placeholder="All types" />
@@ -586,6 +626,7 @@ const SubjectManagement = () => {
             </SelectContent>
           </Select>
 
+          {/* Grade level filter */}
           <Select value={filterGrade} onValueChange={(v) => setFilterGrade(v === "__ALL__" ? "" : v)}>
             <SelectTrigger className="w-full">
               <SelectValue placeholder="All grade levels" />
@@ -600,6 +641,7 @@ const SubjectManagement = () => {
             </SelectContent>
           </Select>
 
+          {/* Page size */}
           <Select value={String(pageSize)} onValueChange={(v) => setPageSize(Number(v))}>
             <SelectTrigger className="w-full">
               <SelectValue placeholder="Rows per page" />
@@ -613,6 +655,7 @@ const SubjectManagement = () => {
             </SelectContent>
           </Select>
 
+          {/* Clear filters */}
           <div className="lg:col-span-1 w-full">
             <Button variant="outline" className="w-full" onClick={clearFilters}>
               Clear filters
@@ -621,9 +664,7 @@ const SubjectManagement = () => {
         </div>
 
         <TabsContent value={activeCourse} className="mt-4">
-          {error && (
-            <div className="bg-red-50 text-red-700 p-4 mb-6 rounded-md border border-red-200">{error}</div>
-          )}
+          {error && <div className="bg-red-50 text-red-700 p-4 mb-6 rounded-md border border-red-200">{error}</div>}
 
           {isLoading ? (
             <div className="text-center py-10">Loading subjects...</div>
@@ -633,6 +674,7 @@ const SubjectManagement = () => {
                 <Table>
                   <TableHeader>
                     <TableRow>
+                      {/* NEW: header checkbox */}
                       <TableHead className="w-[44px]">
                         <Checkbox
                           checked={allSelectedOnPage ? true : someSelectedOnPage ? "indeterminate" : false}
@@ -672,6 +714,7 @@ const SubjectManagement = () => {
                     {paginatedSubjects.length > 0 ? (
                       paginatedSubjects.map((subject) => (
                         <TableRow key={subject.id} data-selected={selectedIds.has(subject.id)}>
+                          {/* NEW: row checkbox */}
                           <TableCell className="w-[44px]">
                             <Checkbox
                               checked={selectedIds.has(subject.id)}
@@ -716,6 +759,7 @@ const SubjectManagement = () => {
                 </Table>
               </div>
 
+              {/* Footer: counts + pagination */}
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mt-4">
                 <div className="text-sm text-muted-foreground">
                   Showing <span className="font-medium">{totalItems === 0 ? 0 : pageStartIndex + 1}</span>–
@@ -770,8 +814,10 @@ const SubjectManagement = () => {
         </TabsContent>
       </Tabs>
 
+      {/* Manual Add Dialog */}
       <SubjectForm open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen} onSubmit={handleAddSubject} />
 
+      {/* Edit Subject Dialog */}
       {currentSubject && (
         <SubjectForm
           open={isEditDialogOpen}
@@ -791,6 +837,7 @@ const SubjectManagement = () => {
         />
       )}
 
+      {/* View Subject Dialog */}
       {currentSubject && (
         <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>
           <DialogContent className="sm:max-w-[700px] bg-white">
@@ -848,6 +895,7 @@ const SubjectManagement = () => {
         </Dialog>
       )}
 
+      {/* Single Delete Confirmation Dialog */}
       <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
         <DialogContent className="sm:max-w-[425px] bg-white">
           <DialogHeader>
@@ -874,7 +922,7 @@ const SubjectManagement = () => {
         </DialogContent>
       </Dialog>
 
-      {/* Batch Delete Confirmation with Preview */}
+      {/* NEW: Batch Delete Confirmation with PREVIEW */}
       <AlertDialog open={isBatchDeleteOpen} onOpenChange={setIsBatchDeleteOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -887,7 +935,8 @@ const SubjectManagement = () => {
             </AlertDialogDescription>
           </AlertDialogHeader>
 
-          {selectedSubjects.length > 0 && (
+          {/* PREVIEW LIST */}
+          {selectedSubjects.length > 0 ? (
             <div className="mt-3">
               <div className="text-sm mb-2 text-muted-foreground">Preview of items to be deleted:</div>
               <div className="max-h-60 overflow-auto rounded-md border">
@@ -898,39 +947,35 @@ const SubjectManagement = () => {
                         <div className="truncate">
                           <span className="font-medium">{s.code}</span>{" "}
                           <span className="text-muted-foreground">—</span>{" "}
-                          <span>{s.name}</span>
+                          <span className="">{s.name}</span>
                         </div>
                         <div className="text-xs text-muted-foreground truncate">
                           {(s.strand || "-")} · Grade {(s.gradeLevel || "-")} · Type {(s.type || "-")}
                         </div>
                       </div>
                       <div className="shrink-0 text-xs text-muted-foreground">
-                        {Number(s.schedule_count ?? 0)} sched{Number(s.schedule_count ?? 0) === 1 ? "" : "s"}
+                        {(s.schedule_count ?? 0)} sched{(s.schedule_count ?? 0) === 1 ? "" : "s"}
                       </div>
                     </li>
                   ))}
                 </ul>
               </div>
-
               {selectedSubjects.length > 50 && (
                 <div className="text-xs text-muted-foreground mt-2">
                   +{selectedSubjects.length - 50} more not shown…
                 </div>
               )}
 
+              {/* Warning if any selected has schedules */}
               {scheduledSelectedCount > 0 && (
-                <div
-                  className="mt-3 text-sm rounded-md border border-amber-300 bg-amber-50 text-amber-900 p-2"
-                  role="alert"
-                  aria-live="polite"
-                >
+                <div className="mt-3 text-sm rounded-md border border-amber-300 bg-amber-50 text-amber-900 p-2">
                   <span className="font-medium">{scheduledSelectedCount}</span>{" "}
                   of the selected item{scheduledSelectedCount > 1 ? "s have" : " has"} existing schedule
                   {scheduledSelectedCount > 1 ? "s" : ""}. Deleting them may orphan related data.
                 </div>
               )}
             </div>
-          )}
+          ) : null}
 
           <AlertDialogFooter className="mt-4">
             <AlertDialogCancel onClick={() => setIsBatchDeleteOpen(false)}>Cancel</AlertDialogCancel>
@@ -944,44 +989,11 @@ const SubjectManagement = () => {
         </AlertDialogContent>
       </AlertDialog>
 
+      {/* Bulk Upload Dialog */}
       <BulkUploadForm
         open={isBulkDialogOpen}
         onOpenChange={setIsBulkDialogOpen}
-        onUpload={async (file) => {
-          const ext = file.name.toLowerCase().split(".").pop();
-          if (!["xlsx", "xls"].includes(ext || "")) {
-            toast({
-              variant: "destructive",
-              title: "Invalid file",
-              description: "Only Excel files (.xlsx, .xls) are allowed.",
-            });
-            return;
-          }
-          try {
-            setIsUploading(true);
-            const form = new FormData();
-            form.append("file", file, file.name);
-            const resp = await apiService.bulkUploadSubjects(form);
-            if (resp?.success) {
-              toast({
-                title: "Bulk upload complete",
-                description: resp.message || "Subjects processed successfully.",
-              });
-              setIsBulkDialogOpen(false);
-              await fetchSubjects();
-            } else {
-              throw new Error(resp?.message || "Bulk upload failed");
-            }
-          } catch (err) {
-            toast({
-              variant: "destructive",
-              title: "Upload failed",
-              description: err instanceof Error ? err.message : String(err),
-            });
-          } finally {
-            setIsUploading(false);
-          }
-        }}
+        onUpload={handleBulkUpload}
         isUploading={isUploading}
       />
     </div>

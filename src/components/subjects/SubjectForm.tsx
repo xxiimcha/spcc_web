@@ -37,7 +37,7 @@ interface Subject {
 }
 
 // dropdown options
-const TYPE_OPTIONS = ["core", "contextualized", "Specialized"];
+const TYPE_OPTIONS = ["Core", "Contextualized", "Specialized"];
 const STRAND_OPTIONS = ["ICT", "STEM", "ABM", "HUMSS", "GAS", "HE", "IA"];
 const GRADE_OPTIONS = ["11", "12"];
 
