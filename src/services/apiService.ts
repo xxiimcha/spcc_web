@@ -426,7 +426,6 @@ class ApiService {
     return this.makeRequest("POST", "/validate_time_slots.php", data);
   }
 
-  // --- Misc / Dashboard / Heads --------------------------------------------
 
   async getSchoolHeads(): Promise<ApiResponse> {
     return this.makeRequest("GET", "/school_head.php");
@@ -481,10 +480,6 @@ class ApiService {
       }
       return { success: false, status: "error", message: "An unexpected error occurred", error: String(error) };
     }
-  }
-
-  async optimizeSchedule(optimizationData: any): Promise<ApiResponse> {
-    return this.makeRequest("POST", "/advanced_schedule_optimizer.php", optimizationData);
   }
 
   async syncToFirebase(): Promise<ApiResponse> {

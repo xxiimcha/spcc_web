@@ -112,12 +112,16 @@ type TabFilter = "all" | "auto" | "manual";
 
 /* ----------------- Utils ----------------- */
 const deriveOrigin = (raw: any): Origin => {
+  const o = (raw?.origin || "").toString().toLowerCase();
+
+  // Treat any "auto*" origin (e.g., "auto-default") as auto
+  if (o.startsWith("auto")) return "auto";
+
   if (
     raw?.is_auto_generated === true ||
     raw?.auto_generated === true ||
     raw?.generated_by === "auto" ||
-    raw?.created_by === "system" ||
-    raw?.origin === "auto"
+    raw?.created_by === "system"
   ) {
     return "auto";
   }
@@ -199,6 +203,9 @@ const ScheduleManagement: React.FC = () => {
   const [scheduleToEdit, setScheduleToEdit] = useState<Schedule | null>(null);
   const [selectedProfessorId, setSelectedProfessorId] = useState<string>("");
 
+  // Version to force-remount calendar after data refresh
+  const [dataVersion, setDataVersion] = useState(0);
+
   /* ----- Stats ----- */
   const stats = useMemo(() => {
     const total = schedules.length;
@@ -211,13 +218,16 @@ const ScheduleManagement: React.FC = () => {
   }, [schedules]);
 
   /* ----- Data Fetch ----- */
-  const fetchSchedules = async () => {
+  const fetchSchedules = async (): Promise<number> => {
     setLoading(true);
     try {
+      // send a cache buster to avoid 304/proxy/browser caches
       const response = await apiService.getSchedules({
         school_year: settings.schoolYear,
         semester: settings.semester,
+        _t: Date.now(), // cache-bust query param
       });
+
       if (response.success && Array.isArray(response.data)) {
         const mapped = response.data.map((schedule: any) => ({
           schedule_id: schedule.schedule_id?.toString?.() ?? String(schedule.schedule_id),
@@ -225,7 +235,9 @@ const ScheduleManagement: React.FC = () => {
           semester: schedule.semester,
           subj_code: schedule.subj_code || "",
           subj_name: schedule.subj_name || (schedule.schedule_type ?? ""),
-          professor_name: schedule.professor_name || (["Homeroom","Recess"].includes(schedule.schedule_type) ? "—" : ""),
+          professor_name:
+            schedule.professor_name ||
+            (["Homeroom", "Recess"].includes(schedule.schedule_type) ? "—" : ""),
           section_name: schedule.section_name,
           schedule_type: schedule.schedule_type,
           start_time: schedule.start_time,
@@ -233,19 +245,36 @@ const ScheduleManagement: React.FC = () => {
           days: Array.isArray(schedule.days)
             ? schedule.days
             : typeof schedule.days === "string"
-            ? (() => { try { return JSON.parse(schedule.days); } catch { return []; } })()
+            ? (() => {
+                try {
+                  return JSON.parse(schedule.days);
+                } catch {
+                  return [];
+                }
+              })()
             : [],
           room_number: schedule.room_number,
           room_type: schedule.room_type,
           level: schedule.level || "",
           strand: schedule.strand || "",
           origin: deriveOrigin(schedule),
-          status: (schedule.status || schedule.review_status || "").toString().toLowerCase(),
+          status: (schedule.status || schedule.review_status || "")
+            .toString()
+            .toLowerCase(),
         })) as Schedule[];
-        setSchedules(mapped.map(normalizeStaticSlot));
+
+        const normalized = mapped.map(normalizeStaticSlot);
+        setSchedules(normalized);
+
+        // Force WeekCalendar to remount (avoid stale memoized layout)
+        setDataVersion((v) => v + 1);
+
+        return normalized.length;
       }
+      return 0;
     } catch {
       toast({ title: "Error", description: "Failed to load schedules", variant: "destructive" });
+      return 0;
     } finally {
       setLoading(false);
     }
@@ -299,18 +328,39 @@ const ScheduleManagement: React.FC = () => {
   const runAutomation = async (payload: any) => {
     setIsChecking(true);
     try {
+      const beforeCount = schedules.length;
+
       const res = await apiService.autoGenerate({
         ...payload,
         school_year: settings.schoolYear,
         semester: settings.semester,
       });
+
       if (res.success) {
-        await fetchSchedules();
-        toast({ title: "Automation complete", description: res.message || "Generated schedules successfully." });
+        let afterCount = await fetchSchedules();
+
+        // If the count didn't change yet, retry a few short times to dodge write-lag
+        if (afterCount === beforeCount) {
+          const waits = [150, 300, 500]; // ms
+          for (const w of waits) {
+            await new Promise((r) => setTimeout(r, w));
+            afterCount = await fetchSchedules();
+            if (afterCount !== beforeCount) break;
+          }
+        }
+
         setIsAutoDialogOpen(false);
         setTab("auto");
+        toast({
+          title: "Automation complete",
+          description: res.message || "Generated schedules successfully.",
+        });
       } else {
-        toast({ title: "Automation failed", description: res.message || "See server logs.", variant: "destructive" });
+        toast({
+          title: "Automation failed",
+          description: res.message || "See server logs.",
+          variant: "destructive",
+        });
       }
     } catch (e: any) {
       toast({ title: "Error", description: e?.message || "Automation error.", variant: "destructive" });
@@ -404,12 +454,11 @@ const ScheduleManagement: React.FC = () => {
   }, [schedules, filters, tab]);
 
   /* ----------------- Calendar View ----------------- */
-  // Calendar window (you can make these user-configurable if you like)
+  // Calendar window
   const CAL_START = "07:30";
   const CAL_END   = "16:30";
   const startMin = toMinutes(CAL_START);
   const endMin   = toMinutes(CAL_END);
-  const windowMin = endMin - startMin;
 
   // Pixels per minute (affects overall calendar height)
   const PX_PER_MIN = 1.2; // 540min * 1.2 = 648px tall grid
@@ -425,81 +474,28 @@ const ScheduleManagement: React.FC = () => {
     return ticks;
   }, [startMin, endMin]);
 
-  // Events per day with overlap lanes
-  type CalEvent = Schedule & {
-    day: string;          // normalized lower-case day
-    top: number;          // px from top
-    height: number;       // px height
-    lane: number;         // overlap lane index
-    lanesTotal: number;   // total lanes for the cluster
-  };
-
-  const calendarEventsByDay = useMemo(() => {
-    const map: Record<string, CalEvent[]> = {};
-    DAY_ORDER.forEach((d) => (map[d] = []));
-
-    // Expand each schedule by day
-    filteredSchedules.forEach((s) => {
-      const sStart = toMinutes(s.start_time);
-      const sEnd = toMinutes(s.end_time);
-      const top = (sStart - startMin) * PX_PER_MIN;
-      const height = Math.max(2, (sEnd - sStart) * PX_PER_MIN); // ensure visible
-
-      s.days.forEach((rawDay) => {
-        const day = String(rawDay).toLowerCase();
-        if (!DAY_ORDER.includes(day)) return;
-        map[day].push({
-          ...s,
-          day,
-          top,
-          height,
-          lane: 0,
-          lanesTotal: 1,
+  // Events for WeekCalendar
+  const calendarEvents: WeekCalEvent[] = useMemo(() => {
+    const toDay = (d: string) => d.toLowerCase() as WeekCalEvent["day"];
+    const list: WeekCalEvent[] = [];
+    filteredSchedules.map(normalizeStaticSlot).forEach((s) => {
+      (s.days || []).forEach((d) => {
+        list.push({
+          id: `${s.schedule_id}-${d}`,
+          day: toDay(d),
+          start: s.start_time,
+          end: s.end_time,
+          title: (s.subj_code || s.schedule_type || "").toString(),   // shows HOMEROOM / RECESS too
+          subtitle: s.section_name,
+          meta: `${s.professor_name || "—"}${s.room_number ? ` • ${s.room_number}` : ""}`,
+          schedule_type: s.schedule_type,
+          origin: s.origin,
+          raw: s,
         });
       });
     });
-
-    // Assign lanes for overlaps per day
-    DAY_ORDER.forEach((day) => {
-      const items = map[day].sort((a, b) => toMinutes(a.start_time) - toMinutes(b.start_time));
-      // Sweep-line lane assignment
-      const active: { lane: number; end: number }[] = [];
-      items.forEach((ev) => {
-        // Clear finished lanes
-        for (let i = active.length - 1; i >= 0; i--) {
-          if (active[i].end <= toMinutes(ev.start_time)) active.splice(i, 1);
-        }
-        // Find free lane index
-        const used = new Set(active.map(a => a.lane));
-        let lane = 0;
-        while (used.has(lane)) lane++;
-        ev.lane = lane;
-        active.push({ lane, end: toMinutes(ev.end_time) });
-        active.sort((a,b)=>a.lane-b.lane);
-        // Compute lanesTotal later per cluster
-      });
-
-      // Compute lanesTotal per overlap cluster
-      // Simple pass: for each event, lanesTotal = max lanes overlapping it
-      items.forEach((ev, idx) => {
-        const evStart = toMinutes(ev.start_time);
-        const evEnd   = toMinutes(ev.end_time);
-        let maxLane = ev.lane;
-        items.forEach((other, j) => {
-          if (j === idx) return;
-          const oS = toMinutes(other.start_time);
-          const oE = toMinutes(other.end_time);
-          const overlap = !(oE <= evStart || oS >= evEnd);
-          if (overlap) maxLane = Math.max(maxLane, other.lane);
-        });
-        ev.lanesTotal = Math.max(1, maxLane + 1);
-      });
-
-      map[day] = items;
-    });
-
-    return map;
-  }, [filteredSchedules, startMin]);
+    return list;
+  }, [filteredSchedules]);
 
   const getOriginBadge = (origin: Origin) => {
     return origin === "auto" ? (
@@ -634,28 +630,6 @@ const ScheduleManagement: React.FC = () => {
       </CardContent>
     </Card>
   );
-
-  const calendarEvents: WeekCalEvent[] = useMemo(() => {
-    const toDay = (d: string) => d.toLowerCase() as WeekCalEvent["day"];
-    const list: WeekCalEvent[] = [];
-    filteredSchedules.map(normalizeStaticSlot).forEach((s) => {
-      (s.days || []).forEach((d) => {
-        list.push({
-          id: `${s.schedule_id}-${d}`,
-          day: toDay(d),
-          start: s.start_time,
-          end: s.end_time,
-          title: (s.subj_code || s.schedule_type || "").toString(),   // now shows HOMEROOM / RECESS
-          subtitle: s.section_name,
-          meta: `${s.professor_name || "—"}${s.room_number ? ` • ${s.room_number}` : ""}`,
-          schedule_type: s.schedule_type,
-          origin: s.origin,
-          raw: s,
-        });
-      });
-    });
-    return list;
-  }, [filteredSchedules]);
 
   /* ----------------- Render ----------------- */
   return (
@@ -879,6 +853,7 @@ const ScheduleManagement: React.FC = () => {
           </Card>
         ) : viewMode === "calendar" ? (
           <WeekCalendar
+            key={`${dataVersion}-${tab}`}   // force-remount when fresh data or tab changes
             events={calendarEvents}
             startTime="07:30"
             endTime="16:30"
@@ -901,7 +876,7 @@ const ScheduleManagement: React.FC = () => {
               setScheduleToDelete(s.schedule_id);
               setIsDeleteOpen(true);
             }}
-            cols={3} // optional: 1 | 2 | 3 | 4
+            cols={3}
           />
         ) : (
           <ScheduleTable
