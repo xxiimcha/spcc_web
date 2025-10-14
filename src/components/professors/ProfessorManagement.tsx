@@ -25,7 +25,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/components/ui/use-toast";
 import ProfessorForm from "./ProfessorForm";
-import CredentialsViewer from "./CredentialsViewer";
 import SuccessMessage from "../popupmsg/SuccessMessage";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
@@ -46,7 +45,6 @@ interface Professor {
   name: string;
   email?: string;
   phone?: string;
-  qualifications: any;
   username?: string;
   password?: string;
   subjectCount?: number;
@@ -68,7 +66,6 @@ const ProfessorManagement = () => {
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
-  const [isCredentialsDialogOpen, setIsCredentialsDialogOpen] = useState(false);
   const [selectedProfessor, setSelectedProfessor] = useState<Professor | null>(null);
   const [isSuccessDialogOpen, setIsSuccessDialogOpen] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
@@ -111,95 +108,9 @@ const ProfessorManagement = () => {
     return String(val).toUpperCase();
   };
 
-  const normalizeQualifications = (val: any): string[] => {
-    if (!val && val !== 0) return [];
-
-    // If already an array
-    if (Array.isArray(val)) {
-      return val.map((x) => String(x).trim()).filter(Boolean);
-    }
-
-    // If it's an object like {"0":"IT","1":"English"} from PHP
-    if (typeof val === "object") {
-      try {
-        return Object.values(val).map((x) => String(x).trim()).filter(Boolean);
-      } catch {
-        return [];
-      }
-    }
-
-    // If it's a string possibly containing JSON or comma/semicolon separated items
-    const s = String(val).trim();
-    if (!s) return [];
-
-    // Handle double-encoded JSON e.g. "\"[\\\"IT\\\"]\""
-    try {
-      // First parse once
-      const first = JSON.parse(s);
-      if (Array.isArray(first)) {
-        return first.map((x) => String(x).trim()).filter(Boolean);
-      }
-      if (typeof first === "string") {
-        // If it’s still a string that looks like JSON array, try again
-        if (first.trim().startsWith("[")) {
-          const second = JSON.parse(first);
-          if (Array.isArray(second)) {
-            return second.map((x) => String(x).trim()).filter(Boolean);
-          }
-        }
-        // fallback to CSV split
-        return first.split(/[;,]/).map((x) => x.trim()).filter(Boolean);
-      }
-      // If it’s an object after parse
-      if (typeof first === "object" && first) {
-        return Object.values(first).map((x) => String(x).trim()).filter(Boolean);
-      }
-    } catch {
-      // Not JSON: treat as CSV
-      return s.split(/[;,]/).map((x) => x.trim()).filter(Boolean);
-    }
-
-    return [];
-  };
-
   useEffect(() => {
     fetchProfessors();
   }, []);
-  
-  const toStringArray = (val: unknown): string[] => {
-    if (Array.isArray(val)) return val.map((x) => String(x).trim()).filter(Boolean);
-    if (typeof val === "string" && /^".*"$/.test(val)) {
-      try {
-        const unquoted = JSON.parse(val);
-        if (typeof unquoted === "string") {
-          if (unquoted.trim().startsWith("[")) {
-            const innerParsed = JSON.parse(unquoted);
-            return Array.isArray(innerParsed)
-              ? innerParsed.map((x: any) => String(x).trim()).filter(Boolean)
-              : [];
-          }
-          return unquoted
-            .split(/[;,]/)
-            .map((s: string) => s.trim())
-            .filter(Boolean);
-        }
-      } catch {}
-    }
-    if (typeof val === "string" && val.trim().startsWith("[")) {
-      try {
-        const parsed = JSON.parse(val);
-        return Array.isArray(parsed) ? parsed.map((x: any) => String(x).trim()).filter(Boolean) : [];
-      } catch {}
-    }
-    if (typeof val === "string") {
-      return val
-        .split(/[;,]/)
-        .map((s) => s.trim())
-        .filter(Boolean);
-    }
-    if (val == null) return [];
-    return [String(val)].filter(Boolean);
-  };
 
   const fetchProfessors = async () => {
     try {
@@ -210,11 +121,6 @@ const ProfessorManagement = () => {
         const mappedProfessors = response.data.map((prof: any) => {
           const id = (prof.prof_id ?? prof.id)?.toString?.();
           const name = String(prof.prof_name ?? prof.name ?? "").trim();
-
-          // 🔧 robust normalization here
-          const qualifications = normalizeQualifications(
-            prof.qualifications ?? prof.prof_qualifications ?? prof.specialization ?? []
-          );
 
           const subjCount = Number(
             prof.subj_count ??
@@ -232,7 +138,6 @@ const ProfessorManagement = () => {
             phone: prof.prof_phone ?? prof.phone,
             username: prof.prof_username ?? prof.username,
             password: prof.prof_password ?? prof.password,
-            qualifications,               // ← already normalized
             subject_ids: prof.subject_ids ?? [],
             subjectCount: subjCount,
           } as Professor;
@@ -325,6 +230,39 @@ const ProfessorManagement = () => {
       return false;
     }
   };
+
+  // ---------- Reset Password ----------
+  const generateTempPassword = (len = 10) => {
+    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%^&*";
+    return Array.from({ length: len }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
+  };
+
+  const resetPassword = async (prof: Professor) => {
+    try {
+      const temp = generateTempPassword();
+      const res = await fetch(`http://localhost/spcc_database/professors.php?id=${prof.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: temp }),
+      });
+      const json = await res.json();
+      if (json.status === "error") throw new Error(json.message || "Failed to reset password");
+
+      await fetchProfessors();
+
+      setSuccessMessage(
+        `Password for ${prof.name} has been reset.\n\nTemporary Password: ${temp}\n\nAsk the professor to log in and change it immediately.`
+      );
+      setIsSuccessDialogOpen(true);
+    } catch (err) {
+      toast({
+        variant: "destructive",
+        title: "Reset failed",
+        description: err instanceof Error ? err.message : "Could not reset password.",
+      });
+    }
+  };
+  // ------------------------------------
 
   const fetchSubjectsFromProfessorsAPI = async (professorId: string): Promise<Subject[] | null> => {
     try {
@@ -435,7 +373,7 @@ const ProfessorManagement = () => {
       const enriched = await Promise.all(
         filteredProfessors.map((p) => (Array.isArray(p.subjects) ? p : ensureSubjectsFor(p)))
       );
-    const rows = toFlatRows(enriched as Professor[]);
+      const rows = toFlatRows(enriched as Professor[]);
       const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
       const title = "Professors and Assigned Subjects";
       doc.setFontSize(14);
@@ -571,9 +509,7 @@ const ProfessorManagement = () => {
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between mb-6">
         <h2 className="text-2xl font-bold">Professor Management</h2>
         <div className="flex gap-2 flex-wrap">
-          <Button variant="outline" onClick={() => setIsCredentialsDialogOpen(true)} className="flex items-center gap-2">
-            <KeyRound className="h-4 w-4" /> View Credentials
-          </Button>
+          {/* Removed: Credentials Viewer */}
           <Button variant="outline" onClick={exportToExcel} className="flex items-center gap-2">
             <FileSpreadsheet className="h-4 w-4" /> Export Excel
           </Button>
@@ -629,46 +565,25 @@ const ProfessorManagement = () => {
             const subsStart = (page - 1) * size;
             const subsEnd = Math.min(subsStart + size, subsTotal);
             const subsPage = subsFiltered.slice(subsStart, subsEnd);
-            const quals = normalizeQualifications(p.qualifications);
 
             return (
               <div key={p.id} className="rounded-lg border bg-white shadow-sm">
                 <div className="flex items-start justify-between p-4">
                   <div className="w-full grid grid-cols-12 items-start gap-3 text-left">
-                    <div className="col-span-5">
+                    <div className="col-span-6 md:col-span-6">
                       <div className="font-medium leading-5">{p.name}</div>
                       <div className="text-xs text-muted-foreground">{p.email || "N/A"}</div>
                       <div className="text-xs text-muted-foreground">Phone: {p.phone || "N/A"}</div>
                     </div>
-                    <div className="col-span-3">
+                    <div className="col-span-6 md:col-span-6 flex items-center md:justify-end">
                       <span className={getWorkloadStatusClass(count)}>{getWorkloadStatusText(count)}</span>
-                    </div>
-                    <div className="col-span-4">
-                      <div className="flex flex-wrap gap-1">
-                        {quals.length > 0 ? (
-                          <>
-                            {quals.slice(0, 3).map((q, i) => (
-                              <span
-                                key={`${q}-${i}`}
-                                className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-secondary text-secondary-foreground"
-                              >
-                                {q}
-                              </span>
-                            ))}
-                            {quals.length > 3 && (
-                              <span className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-muted text-muted-foreground">
-                                +{quals.length - 3} more
-                              </span>
-                            )}
-                          </>
-                        ) : (
-                          <span className="text-muted-foreground text-xs">No qualifications</span>
-                        )}
-                      </div>
                     </div>
                   </div>
 
                   <div className="shrink-0 flex gap-1 pl-2">
+                    <Button variant="ghost" size="icon" onClick={() => resetPassword(p)} aria-label="Reset password">
+                      <KeyRound className="h-4 w-4" />
+                    </Button>
                     <Button variant="ghost" size="icon" onClick={() => openEdit(p)} aria-label="Edit professor">
                       <Edit className="h-4 w-4" />
                     </Button>
@@ -874,7 +789,6 @@ const ProfessorManagement = () => {
           onOpenChange={setIsAddDialogOpen}
           onSaved={async () => {
             setIsAddDialogOpen(false);
-            // 2) refresh data
             await fetchProfessors();
             setSuccessMessage(`Professor added successfully!`);
             setIsSuccessDialogOpen(true);
@@ -892,9 +806,7 @@ const ProfessorManagement = () => {
             name: selectedProfessor.name ?? "",
             email: selectedProfessor.email ?? "",
             phone: selectedProfessor.phone ?? "",
-            qualifications: Array.isArray(selectedProfessor.qualifications)
-              ? (selectedProfessor.qualifications as string[])
-              : toStringArray(selectedProfessor.qualifications),
+            // qualifications removed
             username: selectedProfessor.username ?? "",
             subject_ids: (selectedProfessor.subject_ids ?? []).map(Number),
           }}
@@ -938,8 +850,6 @@ const ProfessorManagement = () => {
         onClose={() => setIsSuccessDialogOpen(false)}
         message={successMessage}
       />
-
-      <CredentialsViewer open={isCredentialsDialogOpen} onOpenChange={setIsCredentialsDialogOpen} professors={professors} />
     </div>
   );
 };
