@@ -113,51 +113,55 @@ const ProfessorManagement = () => {
   }, []);
 
   const fetchProfessors = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const response = await apiService.getProfessors();
-      if (response.success && Array.isArray(response.data)) {
-        const mappedProfessors = response.data.map((prof: any) => {
-          const id = (prof.prof_id ?? prof.id)?.toString?.();
-          const name = String(prof.prof_name ?? prof.name ?? "").trim();
+  try {
+    setLoading(true);
+    setError(null);
+    const response = await apiService.getProfessors();
+    if (response.success && Array.isArray(response.data)) {
+      const mappedProfessors = response.data.map((prof: any) => {
+        const id = (prof.prof_id ?? prof.id)?.toString?.();
+        const name = String(prof.prof_name ?? prof.name ?? "").trim();
 
-          const subjCount = Number(
-            prof.subj_count ??
-              prof.subjectCount ??
-              prof.subject_count ??
-              prof.subjects_count ??
-              (Array.isArray(prof.subjects) ? prof.subjects.length : undefined) ??
-              (Array.isArray(prof.subject_ids) ? prof.subject_ids.length : 0)
-          );
+        const subjCount = Number(
+          prof.subj_count ??
+          prof.subjectCount ??
+          prof.subject_count ??
+          prof.subjects_count ??
+          (Array.isArray(prof.subjects) ? prof.subjects.length : undefined) ??
+          (Array.isArray(prof.subject_ids) ? prof.subject_ids.length : 0)
+        );
 
-          return {
-            id,
-            name,
-            email: prof.prof_email ?? prof.email,
-            phone: prof.prof_phone ?? prof.phone,
-            username: prof.prof_username ?? prof.username,
-            password: prof.prof_password ?? prof.password,
-            subject_ids: prof.subject_ids ?? [],
-            subjectCount: subjCount,
-          } as Professor;
-        });
-
-        setProfessors(mappedProfessors);
-      } else {
-        setProfessors([]);
-        if (!response.success) throw new Error(response.message || "Failed to fetch professors");
-      }
-    } catch (err) {
-      setError("Failed to load professors. Please try again later.");
-      toast({
-        variant: "destructive",
-        title: "Error",
-        description: err instanceof Error ? err.message : "Could not fetch professors from the server.",
+        return {
+          id,
+          name,
+          email: prof.prof_email ?? prof.email,
+          phone: prof.prof_phone ?? prof.phone,
+          username: prof.prof_username ?? prof.username,
+          password: prof.prof_password ?? prof.password,
+          subject_ids: prof.subject_ids ?? [],
+          subjectCount: subjCount,
+        } as Professor;
       });
-    } finally {
-      setLoading(false);
+
+      setProfessors(mappedProfessors);
+
+      // IMPORTANT: invalidate subject caches so Subjects tab re-fetches fresh data
+      setSubjectsLoadedIds({});
+      setLoadingSubjectsIds({});
+    } else {
+      setProfessors([]);
+      if (!response.success) throw new Error(response.message || "Failed to fetch professors");
     }
+  } catch (err) {
+    setError("Failed to load professors. Please try again later.");
+    toast({
+      variant: "destructive",
+      title: "Error",
+      description: err instanceof Error ? err.message : "Could not fetch professors from the server.",
+    });
+  } finally {
+    setLoading(false);
+  }
   };
 
   const addProfessor = async (professorData: Omit<Professor, "id">) => {
@@ -330,11 +334,19 @@ const ProfessorManagement = () => {
     setActiveTabById((m) => ({ ...m, [profId]: nextTab }));
     if (nextTab === "subjects") {
       const prof = professors.find((x) => x.id === profId);
-      if (prof && !subjectsLoadedIds[profId]) {
+      if (
+        prof &&
+        (
+          !subjectsLoadedIds[profId] ||
+          !Array.isArray(prof.subjects) ||
+          prof.subjects.length === 0
+        )
+      ) {
         await ensureSubjectsFor(prof);
       }
     }
   };
+
 
   const toFlatRows = (list: Professor[]) => {
     const rows: Array<[string, string, string, string]> = [];
@@ -811,12 +823,18 @@ const ProfessorManagement = () => {
             name: selectedProfessor.name ?? "",
             email: selectedProfessor.email ?? "",
             phone: selectedProfessor.phone ?? "",
-            // qualifications removed
             username: selectedProfessor.username ?? "",
             subject_ids: (selectedProfessor.subject_ids ?? []).map(Number),
           }}
           onSaved={async () => {
             setIsEditDialogOpen(false);
+
+            const profId = String(selectedProfessor.id);
+            setSubjectsLoadedIds((m) => ({ ...m, [profId]: false }));
+            setProfessors((prev) =>
+              prev.map((p) => (p.id === profId ? { ...p, subjects: undefined } : p))
+            );
+
             setSelectedProfessor(null);
             await fetchProfessors();
             setSuccessMessage(`Professor updated successfully!`);
