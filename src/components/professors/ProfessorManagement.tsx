@@ -243,15 +243,20 @@ const ProfessorManagement = () => {
       const res = await fetch(`http://localhost/spcc_database/professors.php?id=${prof.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password: temp }),
+        body: JSON.stringify({ password: temp }), // ONLY the password
       });
       const json = await res.json();
       if (json.status === "error") throw new Error(json.message || "Failed to reset password");
 
       await fetchProfessors();
 
+      const emailMsg =
+        json.email?.sent === true
+          ? "An email notification was sent to the professor."
+          : "Password updated but email notification failed.";
+
       setSuccessMessage(
-        `Password for ${prof.name} has been reset.\n\nTemporary Password: ${temp}\n\nAsk the professor to log in and change it immediately.`
+        `Password for ${prof.name} has been reset.\n\nTemporary Password: ${temp}\n\n${emailMsg}`
       );
       setIsSuccessDialogOpen(true);
     } catch (err) {
@@ -262,7 +267,7 @@ const ProfessorManagement = () => {
       });
     }
   };
-  // ------------------------------------
+
 
   const fetchSubjectsFromProfessorsAPI = async (professorId: string): Promise<Subject[] | null> => {
     try {

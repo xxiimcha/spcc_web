@@ -1,4 +1,3 @@
-// ...imports stay the same
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -35,24 +34,41 @@ const optionalNonEmpty = (schema: z.ZodTypeAny) =>
 
 const phoneRegex = /^(?:\+?63|0)?(?:\d[\s-]?){9,12}\d$/;
 
-const formSchema = z.object({
-  name: z.string().min(2, { message: "Name must be at least 2 characters" }),
-  username: z
-    .string()
-    .min(4, { message: "Username must be at least 4 characters" })
-    .regex(/^[a-z0-9._-]+$/, { message: "Use lowercase letters, numbers, dot, underscore, or dash" }),
-  password: z.string().min(6, { message: "Password must be at least 6 characters" }),
-  email: z.string().trim().min(1, { message: "Email is required" }).email({ message: "Please enter a valid email address" }),
-  phone: optionalNonEmpty(z.string().regex(phoneRegex, { message: "Please enter a valid phone number" })),
-  qualifications: z.array(z.string()).min(1, { message: "Add at least one specialization" }),
-  subject_ids: z.array(z.number()).nonempty({ message: "Assign at least one subject" }),
-});
+const makeSchema = (isEdit: boolean) =>
+  z.object({
+    name: z.string().min(2, { message: "Name must be at least 2 characters" }),
+    username: z
+      .string()
+      .min(4, { message: "Username must be at least 4 characters" })
+      .regex(/^[a-z0-9._-]+$/, {
+        message: "Use lowercase letters, numbers, dot, underscore, or dash",
+      }),
+    password: isEdit
+      ? z
+          .union([z.string().min(6), z.literal("")])
+          .transform((v) => (v === "" ? undefined : v))
+      : z.string().min(6, { message: "Password must be at least 6 characters" }),
+    email: z
+      .string()
+      .trim()
+      .min(1, { message: "Email is required" })
+      .email({ message: "Please enter a valid email address" }),
+    phone: optionalNonEmpty(
+      z.string().regex(phoneRegex, { message: "Please enter a valid phone number" })
+    ),
+    qualifications: z
+      .array(z.string())
+      .min(1, { message: "Add at least one specialization" }),
+    subject_ids: z
+      .array(z.number())
+      .nonempty({ message: "Assign at least one subject" }),
+  });
 
 interface ProfessorFormProps {
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
   onSaved?: () => void;
-  initialData?: Partial<z.infer<typeof formSchema>> & { prof_id?: number };
+  initialData?: Partial<z.infer<ReturnType<typeof makeSchema>>> & { prof_id?: number };
 }
 
 interface Subject {
@@ -60,8 +76,8 @@ interface Subject {
   code: string;
   name: string;
   description?: string;
-  strand?: string;              // ← NEW
-  grade_level?: string | number; // (optional, if you decide to show/use later)
+  strand?: string;
+  grade_level?: string | number;
 }
 
 const arraysEqualUnordered = (a: number[] = [], b: number[] = []) => {
@@ -80,8 +96,8 @@ const normalizeSubjectsResponse = (raw: any): Subject[] => {
       code: String(s.subj_code ?? s.code ?? "").trim(),
       name: String(s.subj_name ?? s.name ?? "").trim(),
       description: (s.subj_description ?? s.description ?? "")?.toString()?.trim() || undefined,
-      strand: (s.strand ?? s.track ?? s.strand_code ?? "")?.toString()?.trim() || undefined, // ← NEW
-      grade_level: s.grade_level ?? s.grade ?? s.year_level, // (optional)
+      strand: (s.strand ?? s.track ?? s.strand_code ?? "")?.toString()?.trim() || undefined,
+      grade_level: s.grade_level ?? s.grade ?? s.year_level,
     }))
     .filter((s: Subject) => s.id > 0 && (s.code || s.name));
 };
@@ -102,7 +118,9 @@ const makePassword = (len = 12) => {
   const sets = ["ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz", "0123456789"];
   const required = sets.map((s) => s[Math.floor(Math.random() * s.length)]);
   const all = sets.join("");
-  const remain = Array.from({ length: Math.max(0, len - required.length) }, () => all[Math.floor(Math.random() * all.length)]);
+  const remain = Array.from({ length: Math.max(0, len - required.length) }, () =>
+    all[Math.floor(Math.random() * all.length)]
+  );
   const raw = [...required, ...remain];
   for (let i = raw.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
@@ -118,7 +136,7 @@ const ProfessorForm = ({
   initialData = {
     name: "",
     username: "",
-    password: "",
+    // password left intentionally blank on edit
     email: "",
     phone: "",
     qualifications: [],
@@ -143,19 +161,21 @@ const ProfessorForm = ({
     (initialData.subject_ids as number[]) || []
   );
 
-  // Existing search controls
   const [subjectSearch, setSubjectSearch] = useState("");
   const [subjectFilterKey, setSubjectFilterKey] = useState<"all" | "code" | "name">("all");
-
-  // NEW: strand filter
   const [subjectStrandFilter, setSubjectStrandFilter] = useState<string>("ALL");
 
   const abortRef = useRef<AbortController | null>(null);
 
-  const form = useForm<z.infer<typeof formSchema>>({
-    resolver: zodResolver(formSchema),
+  // EDIT/CREATE mode and schema memo
+  const isEdit = Boolean((initialData as any).prof_id);
+  const schema = useMemo(() => makeSchema(isEdit), [isEdit]);
+
+  const form = useForm<z.infer<ReturnType<typeof makeSchema>>>({
+    resolver: zodResolver(schema),
     defaultValues: {
       ...initialData,
+      password: "", // keep blank on edit; required on create by schema
       qualifications: initialData.qualifications || [],
       subject_ids: (initialData.subject_ids as number[]) || [],
     },
@@ -219,7 +239,7 @@ const ProfessorForm = ({
     setSelectedSubjectIds([]);
     setSubjectSearch("");
     setSubjectFilterKey("all");
-    setSubjectStrandFilter("ALL"); // reset strand filter
+    setSubjectStrandFilter("ALL");
   };
 
   const handleGenerateUsername = () => {
@@ -277,14 +297,13 @@ const ProfessorForm = ({
     form.setValue("subject_ids", next, { shouldValidate: true });
   };
 
-  const isEdit = Boolean(initialData.prof_id);
   const isNoChange = useMemo(() => {
     if (!isEdit) return false;
     const values = form.getValues();
     const baseSame =
       (values.name || "") === (initialData.name || "") &&
       (values.username || "") === (initialData.username || "") &&
-      (values.password || "") === (initialData.password || "") &&
+      // password is optional on edit; ignore it in comparison
       (values.email || "") === (initialData.email || "") &&
       (values.phone || "") === (initialData.phone || "");
     const qualsSame =
@@ -297,7 +316,6 @@ const ProfessorForm = ({
     return baseSame && qualsSame && subjectsSame;
   }, [form.watch(), initialData, isEdit]);
 
-  // Unique strands (uppercased, sorted)
   const availableStrands = useMemo(() => {
     const set = new Set<string>();
     subjects.forEach((s) => {
@@ -307,7 +325,6 @@ const ProfessorForm = ({
     return Array.from(set).sort();
   }, [subjects]);
 
-  // Apply search + filter type + strand filter
   const visibleSubjects = useMemo(() => {
     const q = subjectSearch.trim().toLowerCase();
     const filteredByQuery = !q
@@ -321,28 +338,30 @@ const ProfessorForm = ({
         });
 
     if (subjectStrandFilter === "ALL") return filteredByQuery;
-    return filteredByQuery.filter(
-      (s) => (s.strand || "").toUpperCase() === subjectStrandFilter
-    );
+    return filteredByQuery.filter((s) => (s.strand || "").toUpperCase() === subjectStrandFilter);
   }, [subjects, subjectSearch, subjectFilterKey, subjectStrandFilter]);
 
-  const handleSubmit = async (data: z.infer<typeof formSchema>) => {
+  const handleSubmit = async (data: z.infer<ReturnType<typeof makeSchema>>) => {
     try {
       setIsSubmitting(true);
 
-      const payload = {
+      const payload: any = {
         name: data.name.trim(),
         username: data.username.trim(),
-        password: data.password,
         email: data.email.trim(),
         phone: data.phone || "",
         qualifications: qualifications.map((q) => q.trim()).filter(Boolean),
         subject_ids: selectedSubjectIds.map(Number),
       };
 
+      // Only send password when creating OR when user entered a new one during edit
+      if (!isEdit || (data.password && String(data.password).trim() !== "")) {
+        payload.password = data.password as string;
+      }
+
       let res;
       if (isEdit) {
-        const url = `${ABS_PROFESSORS_URL}?id=${initialData.prof_id}`;
+        const url = `${ABS_PROFESSORS_URL}?id=${(initialData as any).prof_id}`;
         res = await axios.put(url, payload, { timeout: 20000 });
       } else {
         res = await axios.post(ABS_PROFESSORS_URL, payload, { timeout: 20000 });
@@ -423,7 +442,7 @@ const ProfessorForm = ({
                   </Button>
                 </div>
 
-                {/* name, username, password, email, phone blocks unchanged */}
+                {/* Name */}
                 <FormField
                   control={form.control}
                   name="name"
@@ -446,6 +465,7 @@ const ProfessorForm = ({
                   )}
                 />
 
+                {/* Username */}
                 <FormField
                   control={form.control}
                   name="username"
@@ -471,12 +491,15 @@ const ProfessorForm = ({
                   )}
                 />
 
+                {/* Password */}
                 <FormField
                   control={form.control}
                   name="password"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Password</FormLabel>
+                      <FormLabel>
+                        Password{isEdit ? " (leave blank to keep current)" : ""}
+                      </FormLabel>
                       <div className="flex items-center space-x-2">
                         <div className="relative flex-1">
                           <FormControl>
@@ -494,7 +517,11 @@ const ProfessorForm = ({
                             onClick={() => setShowPassword(!showPassword)}
                             title={showPassword ? "Hide password" : "Show password"}
                           >
-                            {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                            {showPassword ? (
+                              <EyeOff className="h-4 w-4" />
+                            ) : (
+                              <Eye className="h-4 w-4" />
+                            )}
                           </Button>
                         </div>
                         <Button
@@ -512,6 +539,7 @@ const ProfessorForm = ({
                   )}
                 />
 
+                {/* Email */}
                 <FormField
                   control={form.control}
                   name="email"
@@ -526,6 +554,7 @@ const ProfessorForm = ({
                   )}
                 />
 
+                {/* Phone */}
                 <FormField
                   control={form.control}
                   name="phone"
@@ -541,7 +570,7 @@ const ProfessorForm = ({
                 />
               </div>
 
-              {/* Qualifications (unchanged) */}
+              {/* Qualifications */}
               <div className="space-y-4">
                 <FormField
                   control={form.control}
@@ -624,7 +653,7 @@ const ProfessorForm = ({
                       </div>
                     </FormLabel>
 
-                    {/* Search + filter type + STRAND filter */}
+                    {/* Search + filters */}
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between mb-2">
                       <div className="flex flex-wrap gap-2 items-center">
                         <Input
@@ -643,8 +672,6 @@ const ProfessorForm = ({
                           <option value="code">Subject Code</option>
                           <option value="name">Subject Name</option>
                         </select>
-
-                        {/* NEW Strand selector */}
                         <select
                           className="border rounded-md px-2 py-2 text-sm"
                           value={subjectStrandFilter}
@@ -658,7 +685,6 @@ const ProfessorForm = ({
                             </option>
                           ))}
                         </select>
-
                         {(subjectSearch || subjectStrandFilter !== "ALL") && (
                           <Button
                             type="button"
@@ -673,9 +699,10 @@ const ProfessorForm = ({
                           </Button>
                         )}
                       </div>
-
                       <div className="text-xs text-muted-foreground">
-                        {subjectsLoading ? "Loading…" : `${visibleSubjects.length} / ${subjects.length} subjects`}
+                        {subjectsLoading
+                          ? "Loading…"
+                          : `${visibleSubjects.length} / ${subjects.length} subjects`}
                       </div>
                     </div>
 
@@ -702,7 +729,11 @@ const ProfessorForm = ({
                                   className="text-sm leading-none cursor-pointer select-none"
                                 >
                                   <span className="font-medium">{s.code || "SUBJ"}</span> - {s.name}
-                                  {s.strand ? <span className="text-xs text-muted-foreground"> &nbsp;({s.strand.toUpperCase()})</span> : null}
+                                  {s.strand ? (
+                                    <span className="text-xs text-muted-foreground">
+                                      {" "}({s.strand.toUpperCase()})
+                                    </span>
+                                  ) : null}
                                 </label>
                               </li>
                             );
@@ -723,7 +754,7 @@ const ProfessorForm = ({
                 <Button type="submit" disabled={isSubmitting || isNoChange}>
                   {isSubmitting
                     ? "Submitting…"
-                    : initialData.prof_id
+                    : (initialData as any).prof_id
                     ? isNoChange
                       ? "No changes"
                       : "Update Professor"
@@ -735,8 +766,16 @@ const ProfessorForm = ({
         </DialogContent>
       </Dialog>
 
-      <SuccessMessage isOpen={isSuccessDialogOpen} onClose={handleSuccessDialogClose} message={successMessage} />
-      <ErrorMessage isOpen={isErrorDialogOpen} onClose={() => setIsErrorDialogOpen(false)} message={errorMessage} />
+      <SuccessMessage
+        isOpen={isSuccessDialogOpen}
+        onClose={handleSuccessDialogClose}
+        message={successMessage}
+      />
+      <ErrorMessage
+        isOpen={isErrorDialogOpen}
+        onClose={() => setIsErrorDialogOpen(false)}
+        message={errorMessage}
+      />
     </>
   );
 };
