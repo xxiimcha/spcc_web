@@ -29,6 +29,8 @@ import axios from "axios";
 const ABS_SUBJECTS_URL = "http://localhost/spcc_database/subjects.php";
 const ABS_PROFESSORS_URL = "http://localhost/spcc_database/professors.php";
 
+const MAX_SUBJECTS = 8;
+
 const optionalNonEmpty = (schema: z.ZodTypeAny) =>
   z.union([schema, z.literal("").transform(() => undefined)]);
 
@@ -136,7 +138,6 @@ const ProfessorForm = ({
   initialData = {
     name: "",
     username: "",
-    // password left intentionally blank on edit
     email: "",
     phone: "",
     qualifications: [],
@@ -167,7 +168,6 @@ const ProfessorForm = ({
 
   const abortRef = useRef<AbortController | null>(null);
 
-  // EDIT/CREATE mode and schema memo
   const isEdit = Boolean((initialData as any).prof_id);
   const schema = useMemo(() => makeSchema(isEdit), [isEdit]);
 
@@ -175,12 +175,27 @@ const ProfessorForm = ({
     resolver: zodResolver(schema),
     defaultValues: {
       ...initialData,
-      password: "", // keep blank on edit; required on create by schema
+      password: "",
       qualifications: initialData.qualifications || [],
       subject_ids: (initialData.subject_ids as number[]) || [],
     },
     mode: "onSubmit",
   });
+
+  // --- Helpers for max-cap logic ---
+  const reachedMax = selectedSubjectIds.length >= MAX_SUBJECTS;
+  const limitAdd = (current: number[], candidates: number[], max: number) => {
+    const set = new Set(current);
+    const out: number[] = [...current];
+    for (const id of candidates) {
+      if (out.length >= max) break;
+      if (!set.has(id)) {
+        set.add(id);
+        out.push(id);
+      }
+    }
+    return out;
+  };
 
   const loadSubjects = async () => {
     try {
@@ -217,8 +232,10 @@ const ProfessorForm = ({
   useEffect(() => {
     const incoming = ((initialData.subject_ids as number[]) || []).map(Number);
     if (!arraysEqualUnordered(incoming, selectedSubjectIds)) {
-      setSelectedSubjectIds(incoming);
-      form.setValue("subject_ids", incoming, { shouldValidate: true });
+      // Respect the max cap if initial data tries to exceed it
+      const capped = incoming.slice(0, MAX_SUBJECTS);
+      setSelectedSubjectIds(capped);
+      form.setValue("subject_ids", capped, { shouldValidate: true });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [JSON.stringify(initialData.subject_ids)]);
@@ -276,34 +293,42 @@ const ProfessorForm = ({
 
   const toggleAllSubjects = () => {
     if (subjects.length === 0) return;
+
     const ids = subjects.map((s) => Number(s.id));
     if (allSelected) {
       if (selectedSubjectIds.length === 0) return;
       setSelectedSubjectIds([]);
       form.setValue("subject_ids", [], { shouldValidate: true });
     } else {
-      if (arraysEqualUnordered(selectedSubjectIds, ids)) return;
-      setSelectedSubjectIds(ids);
-      form.setValue("subject_ids", ids, { shouldValidate: true });
+      // Select up to MAX_SUBJECTS (respect already-selected)
+      const next = limitAdd(selectedSubjectIds, ids, MAX_SUBJECTS);
+      setSelectedSubjectIds(next);
+      form.setValue("subject_ids", next, { shouldValidate: true });
     }
   };
 
   const toggleSubject = (id: number, checked: boolean) => {
     const nId = Number(id);
-    const next = checked
-      ? Array.from(new Set([...selectedSubjectIds, nId]))
-      : selectedSubjectIds.filter((x) => x !== nId);
-    setSelectedSubjectIds(next);
-    form.setValue("subject_ids", next, { shouldValidate: true });
+    if (checked) {
+      // Add only if we still have room
+      if (selectedSubjectIds.includes(nId)) return;
+      if (selectedSubjectIds.length >= MAX_SUBJECTS) return; // UI should disable, but guard too
+      const next = [...selectedSubjectIds, nId];
+      setSelectedSubjectIds(next);
+      form.setValue("subject_ids", next, { shouldValidate: true });
+    } else {
+      const next = selectedSubjectIds.filter((x) => x !== nId);
+      setSelectedSubjectIds(next);
+      form.setValue("subject_ids", next, { shouldValidate: true });
+    }
   };
 
   const isNoChange = useMemo(() => {
-    if (!isEdit) return false;
     const values = form.getValues();
+    if (!isEdit) return false;
     const baseSame =
       (values.name || "") === (initialData.name || "") &&
       (values.username || "") === (initialData.username || "") &&
-      // password is optional on edit; ignore it in comparison
       (values.email || "") === (initialData.email || "") &&
       (values.phone || "") === (initialData.phone || "");
     const qualsSame =
@@ -345,6 +370,14 @@ const ProfessorForm = ({
     try {
       setIsSubmitting(true);
 
+      // Safety net: block submit if > MAX
+      if (selectedSubjectIds.length > MAX_SUBJECTS) {
+        setErrorMessage(`You can assign a maximum of ${MAX_SUBJECTS} subjects.`);
+        setIsErrorDialogOpen(true);
+        setIsSubmitting(false);
+        return;
+      }
+
       const payload: any = {
         name: data.name.trim(),
         username: data.username.trim(),
@@ -354,7 +387,6 @@ const ProfessorForm = ({
         subject_ids: selectedSubjectIds.map(Number),
       };
 
-      // Only send password when creating OR when user entered a new one during edit
       if (!isEdit || (data.password && String(data.password).trim() !== "")) {
         payload.password = data.password as string;
       }
@@ -517,11 +549,7 @@ const ProfessorForm = ({
                             onClick={() => setShowPassword(!showPassword)}
                             title={showPassword ? "Hide password" : "Show password"}
                           >
-                            {showPassword ? (
-                              <EyeOff className="h-4 w-4" />
-                            ) : (
-                              <Eye className="h-4 w-4" />
-                            )}
+                            {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                           </Button>
                         </div>
                         <Button
@@ -628,7 +656,9 @@ const ProfessorForm = ({
                     <FormLabel className="flex items-center justify-between">
                       <span>
                         Assign Subjects{" "}
-                        <span className="text-muted-foreground text-sm">({selectedCount} selected)</span>
+                        <span className="text-muted-foreground text-sm">
+                          ({selectedCount} selected, max {MAX_SUBJECTS})
+                        </span>
                       </span>
                       <div className="flex items-center gap-3">
                         <Button
@@ -636,9 +666,10 @@ const ProfessorForm = ({
                           size="sm"
                           variant="outline"
                           onClick={toggleAllSubjects}
-                          disabled={subjectsLoading || subjects.length === 0}
+                          disabled={subjectsLoading || subjects.length === 0 || (reachedMax && !allSelected)}
+                          title={reachedMax && !allSelected ? "Maximum reached" : "Select/Clear All"}
                         >
-                          {allSelected ? "Clear All" : "Select All"}
+                          {allSelected ? "Clear All" : "Select All (up to 8)"}
                         </Button>
                         <Button
                           type="button"
@@ -706,6 +737,12 @@ const ProfessorForm = ({
                       </div>
                     </div>
 
+                    {reachedMax && (
+                      <div className="text-xs text-amber-600 mb-1">
+                        Maximum of {MAX_SUBJECTS} subjects reached. Unselect one to choose another.
+                      </div>
+                    )}
+
                     <div className="border rounded-lg p-3 max-h-64 overflow-auto bg-white">
                       {subjectsLoading ? (
                         <p className="text-sm text-muted-foreground">Loading subjects…</p>
@@ -717,22 +754,26 @@ const ProfessorForm = ({
                         <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                           {visibleSubjects.map((s) => {
                             const checked = selectedSubjectIds.includes(s.id);
+                            // Disable if we've reached max and this item is not already checked
+                            const disableThis = !checked && reachedMax;
                             return (
                               <li key={s.id} className="flex items-center gap-2">
                                 <Checkbox
                                   id={`subj-${s.id}`}
                                   checked={checked}
+                                  disabled={disableThis}
                                   onCheckedChange={(val) => toggleSubject(s.id, Boolean(val))}
                                 />
                                 <label
                                   htmlFor={`subj-${s.id}`}
-                                  className="text-sm leading-none cursor-pointer select-none"
+                                  className={`text-sm leading-none select-none ${
+                                    disableThis ? "opacity-60 cursor-not-allowed" : "cursor-pointer"
+                                  }`}
+                                  title={disableThis ? "Maximum selected" : ""}
                                 >
                                   <span className="font-medium">{s.code || "SUBJ"}</span> - {s.name}
                                   {s.strand ? (
-                                    <span className="text-xs text-muted-foreground">
-                                      {" "}({s.strand.toUpperCase()})
-                                    </span>
+                                    <span className="text-xs text-muted-foreground"> ({s.strand.toUpperCase()})</span>
                                   ) : null}
                                 </label>
                               </li>
