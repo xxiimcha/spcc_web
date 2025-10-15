@@ -279,7 +279,7 @@ const ScheduleManagement: React.FC = () => {
 
   const fetchProfessors = async () => {
     try {
-      const response = await apiService.getProfessors();
+      const response = await apiService.getProfessors(); // ← no args
       if (response.success && Array.isArray(response.data)) {
         const mapped = response.data
           .filter((p: any) => p && (p.prof_id || p.id))
@@ -365,10 +365,10 @@ const ScheduleManagement: React.FC = () => {
 
   const openEditProfessor = (schedule: Schedule) => {
     setScheduleToEdit(schedule);
-    const currentProf = professors.find((p) => p.name === schedule.professor_name);
-    setSelectedProfessorId(currentProf ? currentProf.id : "");
+    setSelectedProfessorId("");           
     setIsEditProfOpen(true);
   };
+
 
   const applyProfessorChange = async () => {
     if (!scheduleToEdit || !selectedProfessorId) {
@@ -426,6 +426,13 @@ const ScheduleManagement: React.FC = () => {
       return true;
     });
   }, [schedules, filters, tab]);
+
+  const availableProfessors = useMemo(() => {
+    const currentName = (scheduleToEdit?.professor_name || "").trim().toLowerCase();
+    return professors.filter(
+      (p) => p.name.trim().toLowerCase() !== currentName
+    );
+  }, [professors, scheduleToEdit]);
 
   /* ----------------- Calendar View ----------------- */
   const CAL_START = "07:30";
@@ -997,7 +1004,7 @@ const ScheduleManagement: React.FC = () => {
                   <SelectValue placeholder="Select professor" />
                 </SelectTrigger>
                 <SelectContent>
-                  {professors.map((p) => (
+                  {availableProfessors.map((p) => (
                     <SelectItem key={p.id} value={p.id}>
                       {p.name}
                     </SelectItem>

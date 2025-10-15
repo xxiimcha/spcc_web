@@ -419,10 +419,9 @@ class ApiService {
   }
 
   async updateScheduleProfessor(scheduleId: number | string, professorId: number | string): Promise<ApiResponse> {
-    // dedicated endpoint recommended; adjust if your PHP uses another route
-    return this.makeRequest("PUT", "/update_schedule_professor.php", {
-      schedule_id: /^\d+$/.test(String(scheduleId)) ? Number(scheduleId) : scheduleId,
-      professor_id: Number(professorId),
+    const id = /^\d+$/.test(String(scheduleId)) ? Number(scheduleId) : scheduleId;
+    return this.makeRequest("PUT", `/schedule.php?id=${id}`, {
+      prof_id: Number(professorId),
     });
   }
 
