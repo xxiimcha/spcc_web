@@ -44,13 +44,7 @@ interface NavItemProps {
   isOpen: boolean;
 }
 
-const NavItem = ({
-  icon,
-  label,
-  path,
-  active = false,
-  isOpen,
-}: NavItemProps) => {
+const NavItem = ({ icon, label, path, active = false, isOpen }: NavItemProps) => {
   return (
     <TooltipProvider>
       <Tooltip>
@@ -81,6 +75,18 @@ interface AdminSidebarProps {
   onToggle: () => void;
 }
 
+// Helper function: build current + 3 previous school years
+const getSchoolYears = () => {
+  const now = new Date();
+  const currentStartYear = now.getMonth() >= 5 ? now.getFullYear() : now.getFullYear() - 1;
+  const years: string[] = [];
+  for (let i = 0; i <= 3; i++) {
+    const start = currentStartYear - i;
+    years.push(`${start}-${start + 1}`);
+  }
+  return years;
+};
+
 const AdminSidebar = ({ isOpen, onToggle }: AdminSidebarProps) => {
   const location = useLocation();
   const navigate = useNavigate();
@@ -92,33 +98,21 @@ const AdminSidebar = ({ isOpen, onToggle }: AdminSidebarProps) => {
   const [schoolYears, setSchoolYears] = useState<string[]>([]);
   const [selectedSY, setSelectedSY] = useState<string>("");
 
-  const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "https://spcc-scheduler.site";
+  const API_BASE_URL =
+    import.meta.env.VITE_API_BASE_URL || "https://spcc-scheduler.site";
 
   const handleLogout = () => {
     logout();
     navigate("/pages/login");
   };
 
+  // Populate school years locally when opening export dialog
   useEffect(() => {
-    if (!exportOpen) return;
-
-    const fetchSY = async () => {
-      try {
-        const res = await fetch(`${API_BASE_URL}/school_years.php`);
-        const data = await res.json();
-        const list = Array.isArray(data) ? data : data.items || [];
-        setSchoolYears(list);
-        if (!selectedSY && list.length) setSelectedSY(list[0]);
-      } catch {
-        toast({
-          variant: "destructive",
-          title: "Failed to load school years",
-          description: "Please check your API connection.",
-        });
-      }
-    };
-
-    fetchSY();
+    if (exportOpen) {
+      const list = getSchoolYears();
+      setSchoolYears(list);
+      if (!selectedSY && list.length) setSelectedSY(list[0]);
+    }
   }, [exportOpen]);
 
   const handleExport = async () => {
@@ -169,9 +163,7 @@ const AdminSidebar = ({ isOpen, onToggle }: AdminSidebarProps) => {
           <div className="h-8 w-8 rounded-md bg-red-600 flex items-center justify-center">
             <Shield className="h-4 w-4 text-white" />
           </div>
-          {isOpen && (
-            <h1 className="font-bold text-xl text-red-600">Admin Panel</h1>
-          )}
+          {isOpen && <h1 className="font-bold text-xl text-red-600">Admin Panel</h1>}
           <Button
             variant="ghost"
             size="icon"
@@ -199,7 +191,7 @@ const AdminSidebar = ({ isOpen, onToggle }: AdminSidebarProps) => {
             isOpen={isOpen}
           />
 
-          {/* NEW EXPORT ITEM */}
+          {/* Export Button */}
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -225,9 +217,7 @@ const AdminSidebar = ({ isOpen, onToggle }: AdminSidebarProps) => {
         <div className="flex items-center gap-3">
           <Avatar>
             <AvatarImage src="https://api.dicebear.com/7.x/avataaars/svg?seed=admin" />
-            <AvatarFallback className="bg-red-600 text-white">
-              AD
-            </AvatarFallback>
+            <AvatarFallback className="bg-red-600 text-white">AD</AvatarFallback>
           </Avatar>
           {isOpen && (
             <div>
@@ -253,7 +243,7 @@ const AdminSidebar = ({ isOpen, onToggle }: AdminSidebarProps) => {
 
       {/* Export Dialog */}
       <Dialog open={exportOpen} onOpenChange={setExportOpen}>
-        <DialogContent>
+        <DialogContent className="sm:max-w-[420px]">
           <DialogHeader>
             <DialogTitle>Export Compiled Data</DialogTitle>
             <DialogDescription>
@@ -261,7 +251,7 @@ const AdminSidebar = ({ isOpen, onToggle }: AdminSidebarProps) => {
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-2">
+          <div className="space-y-3 mt-2">
             <label className="text-sm font-medium">School Year</label>
             <Select value={selectedSY} onValueChange={setSelectedSY}>
               <SelectTrigger>
