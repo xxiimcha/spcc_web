@@ -265,13 +265,12 @@ class ApiService {
   }
 
   // --- Subjects -------------------------------------------------------------
-
-  /** Optional filters are passed through; if PHP ignores them now, that's fine. */
+  
   async getSubjects(filters?: {
-    q?: string;                 // if you add q to PHP later
+    q?: string;               
     strand?: string;
-    type?: string;              // core/applied/specialized/contextualized/elective
-    grade_level?: string;       // '11' | '12'
+    type?: string;             
+    grade_level?: string;       
   }): Promise<ApiResponse<SubjectDTO[]>> {
     const qp = new URLSearchParams();
     if (filters?.q) qp.append("q", filters.q);

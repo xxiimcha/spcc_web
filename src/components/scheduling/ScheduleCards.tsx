@@ -10,6 +10,12 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
+  Tabs,
+  TabsList,
+  TabsTrigger,
+  TabsContent,
+} from "@/components/ui/tabs";
+import {
   BookOpen,
   Calendar as CalendarIcon,
   Clock,
@@ -45,20 +51,10 @@ export interface Schedule {
 
 export interface ScheduleCardsProps {
   schedules: Schedule[];
-
-  /** Card click (open details) */
   onCardClick?: (schedule: Schedule) => void;
-
-  /** “Change Professor” in the card actions */
   onEditProfessor?: (schedule: Schedule) => void;
-
-  /** “Review” (only shown for auto + pending) */
   onReview?: (schedule: Schedule) => void;
-
-  /** “Delete” in the card actions */
   onDelete?: (schedule: Schedule) => void;
-
-  /** Grid columns on lg+ screens (default 3) */
   cols?: 1 | 2 | 3 | 4;
 }
 
@@ -168,17 +164,51 @@ const CardActionsMenu: React.FC<{
   </DropdownMenu>
 );
 
-export const ScheduleCards: React.FC<ScheduleCardsProps> = ({
-  schedules,
-  onCardClick,
-  onEditProfessor,
-  onReview,
-  onDelete,
-  cols = 3,
-}) => {
+/* ----------------- New: section grouping ----------------- */
+type SectionGroup = {
+  key: string;        // stable value for TabsTrigger/TabsContent
+  name: string;
+  level?: string;
+  strand?: string;
+  count: number;
+  items: Schedule[];
+};
+
+const useSectionGroups = (schedules: Schedule[]) => {
+  return React.useMemo<SectionGroup[]>(() => {
+    const map = new Map<string, SectionGroup>();
+    for (const s of schedules) {
+      const key = s.section_name; // if you later have section_id, swap to that for stability
+      if (!map.has(key)) {
+        map.set(key, {
+          key,
+          name: s.section_name,
+          level: s.level,
+          strand: s.strand,
+          count: 0,
+          items: [],
+        });
+      }
+      const g = map.get(key)!;
+      g.items.push(s);
+      g.count++;
+    }
+    // sort by section name
+    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [schedules]);
+};
+
+const CardsGrid: React.FC<{
+  data: Schedule[];
+  cols?: 1 | 2 | 3 | 4;
+  onCardClick?: ScheduleCardsProps["onCardClick"];
+  onEditProfessor?: ScheduleCardsProps["onEditProfessor"];
+  onReview?: ScheduleCardsProps["onReview"];
+  onDelete?: ScheduleCardsProps["onDelete"];
+}> = ({ data, cols = 3, onCardClick, onEditProfessor, onReview, onDelete }) => {
   return (
     <div className={`grid gap-4 ${gridCols(cols)}`}>
-      {schedules.map((s) => {
+      {data.map((s) => {
         const d = displayFor(s);
         const stripe = leftStripeClass(s);
 
@@ -260,5 +290,64 @@ export const ScheduleCards: React.FC<ScheduleCardsProps> = ({
         );
       })}
     </div>
+  );
+};
+
+/* ----------------- Component with Tabs ----------------- */
+export const ScheduleCards: React.FC<ScheduleCardsProps> = ({
+  schedules,
+  onCardClick,
+  onEditProfessor,
+  onReview,
+  onDelete,
+  cols = 3,
+}) => {
+  const groups = useSectionGroups(schedules);
+  const allCount = schedules.length;
+  const defaultTab = groups[0]?.key ?? "all";
+
+  return (
+    <Tabs defaultValue={defaultTab} className="w-full">
+      <TabsList className="flex w-full overflow-x-auto">
+        {/* All tab */}
+        <TabsTrigger value="all" className="whitespace-nowrap">
+          All <Badge variant="secondary" className="ml-2">{allCount}</Badge>
+        </TabsTrigger>
+
+        {/* One tab per section */}
+        {groups.map((g) => (
+          <TabsTrigger key={g.key} value={g.key} className="whitespace-nowrap">
+            {g.name}
+            <Badge variant="outline" className="ml-2">{g.count}</Badge>
+          </TabsTrigger>
+        ))}
+      </TabsList>
+
+      {/* All content */}
+      <TabsContent value="all" className="mt-4">
+        <CardsGrid
+          data={schedules}
+          cols={cols}
+          onCardClick={onCardClick}
+          onEditProfessor={onEditProfessor}
+          onReview={onReview}
+          onDelete={onDelete}
+        />
+      </TabsContent>
+
+      {/* Per-section content */}
+      {groups.map((g) => (
+        <TabsContent key={g.key} value={g.key} className="mt-4">
+          <CardsGrid
+            data={g.items}
+            cols={cols}
+            onCardClick={onCardClick}
+            onEditProfessor={onEditProfessor}
+            onReview={onReview}
+            onDelete={onDelete}
+          />
+        </TabsContent>
+      ))}
+    </Tabs>
   );
 };

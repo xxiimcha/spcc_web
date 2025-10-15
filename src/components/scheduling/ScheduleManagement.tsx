@@ -230,7 +230,16 @@ const ScheduleManagement: React.FC = () => {
 
       if (response.success && Array.isArray(response.data)) {
         const mapped = response.data.map((schedule: any) => ({
-          schedule_id: schedule.schedule_id?.toString?.() ?? String(schedule.schedule_id),
+          // ---- robust id mapping (prevents "undefined" and supports legacy keys) ----
+          schedule_id:
+            (
+              schedule.schedule_id ??
+              schedule.sched_id ??
+              schedule.id ??
+              schedule.SchedID ??
+              schedule.SCHEDULE_ID ??
+              ""
+            ).toString(),
           school_year: schedule.school_year,
           semester: schedule.semester,
           subj_code: schedule.subj_code || "",
@@ -372,12 +381,15 @@ const ScheduleManagement: React.FC = () => {
   const deleteSchedule = async () => {
     if (!scheduleToDelete) return;
     try {
-      const response = await apiService.deleteSchedule(parseInt(scheduleToDelete));
+      // If it's purely digits, send a number; otherwise send the raw string
+      const idRaw = scheduleToDelete;
+      const idParam = /^\d+$/.test(idRaw) ? Number(idRaw) : idRaw;
+      const response = await apiService.deleteSchedule(idParam as any);
       if (response.success) {
         setSchedules((prev) => prev.filter((s) => s.schedule_id !== scheduleToDelete));
         toast({ title: "Success", description: "Schedule deleted successfully" });
       } else {
-        toast({ title: "Error", description: "Failed to delete schedule", variant: "destructive" });
+        toast({ title: "Error", description: response?.message || "Failed to delete schedule", variant: "destructive" });
       }
     } catch {
       toast({ title: "Error", description: "Failed to delete schedule", variant: "destructive" });
@@ -409,8 +421,10 @@ const ScheduleManagement: React.FC = () => {
       return;
     }
     try {
-      const sid = parseInt(scheduleToEdit.schedule_id);
-      const pid = parseInt(selectedProfessorId);
+      const sid = /^\d+$/.test(scheduleToEdit.schedule_id)
+        ? Number(scheduleToEdit.schedule_id)
+        : (scheduleToEdit.schedule_id as any);
+      const pid = Number(selectedProfessorId);
       const res = await apiService.updateScheduleProfessor(sid, pid);
       if (res?.success) {
         setSchedules((prev) =>
@@ -551,8 +565,12 @@ const ScheduleManagement: React.FC = () => {
           className="text-red-600 focus:text-red-600"
           onClick={(e) => {
             e.stopPropagation();
-            setScheduleToDelete(s.schedule_id);
-            setIsDeleteOpen(true);
+            if (s?.schedule_id) {
+              setScheduleToDelete(s.schedule_id);
+              setIsDeleteOpen(true);
+            } else {
+              toast({ title: "Delete failed", description: "Missing schedule id.", variant: "destructive" });
+            }
           }}
         >
           <Trash2 className="mr-2 h-4 w-4" />
@@ -873,8 +891,12 @@ const ScheduleManagement: React.FC = () => {
             onEditProfessor={(s) => openEditProfessor(s)}
             onReview={(s) => goToReview(s.schedule_id)}
             onDelete={(s) => {
-              setScheduleToDelete(s.schedule_id);
-              setIsDeleteOpen(true);
+              if (s?.schedule_id) {
+                setScheduleToDelete(s.schedule_id);
+                setIsDeleteOpen(true);
+              } else {
+                toast({ title: "Delete failed", description: "Missing schedule id.", variant: "destructive" });
+              }
             }}
             cols={3}
           />
@@ -888,8 +910,12 @@ const ScheduleManagement: React.FC = () => {
             onEditProfessor={(s) => openEditProfessor(s)}
             onReview={(s) => goToReview(s.schedule_id)}
             onDelete={(s) => {
-              setScheduleToDelete(s.schedule_id);
-              setIsDeleteOpen(true);
+              if (s?.schedule_id) {
+                setScheduleToDelete(s.schedule_id);
+                setIsDeleteOpen(true);
+              } else {
+                toast({ title: "Delete failed", description: "Missing schedule id.", variant: "destructive" });
+              }
             }}
           />
         )}

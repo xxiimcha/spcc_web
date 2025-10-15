@@ -175,7 +175,7 @@ const ScheduleForm: React.FC<ScheduleFormProps> = ({
   const navigate = useNavigate();
 
   const [professors, setProfessors] = useState<Professor[]>([]);
-  const [filteredProfessors, setFilteredProfessors] = useState<Professor[]>([]); // ✅ profs for selected subject (and section)
+  const [filteredProfessors, setFilteredProfessors] = useState<Professor[]>([]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [filteredSubjects, setFilteredSubjects] = useState<Subject[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
@@ -302,36 +302,39 @@ const ScheduleForm: React.FC<ScheduleFormProps> = ({
   // SECTION -> SUBJECTS
   useEffect(() => {
     const sid = watched.section;
-    form.setValue("subjectId", "");
-    form.setValue("professorId", ""); // also clear professor when section changes
-    setFilteredProfessors([]);        // clear list until subject chosen
 
+    // reset dependent fields
+    form.setValue("subjectId", "");
+    form.setValue("professorId", "");
+    setFilteredProfessors([]);
+
+    // no section chosen -> show all subjects
     if (!sid) {
       setFilteredSubjects(subjects);
       return;
     }
 
+    const sec = sections.find((x) => x.id === sid);
+    const grade_level = sec?.grade_level;                // "11" | "12"
+    const strand = (sec?.strand ?? "") || undefined;     // e.g., "STEM"
+
     (async () => {
       setLoading((p) => ({ ...p, sectionSubjects: true }));
       try {
-        const res = await apiService.getSectionSubjects?.(sid);
-        if (res?.success && Array.isArray(res.data)) {
-          const mapped: Subject[] = res.data.map((s: any) =>
-            typeof s === "object"
-              ? {
-                  id: (s.subj_id || s.id).toString(),
-                  code: s.subj_code || s.code || "No Code",
-                  name: s.subj_name || s.name || "No Name",
-                }
-              : subjects.find((x) => x.id === String(s)) || {
-                  id: String(s),
-                  code: String(s),
-                  name: String(s),
-                }
-          );
+        const res = await apiService.getSubjects({
+          grade_level,   
+          strand,       
+        });
+
+        if (res?.success && Array.isArray(res.data) && res.data.length) {
+          const mapped = res.data.map((s: any) => ({
+            id: String(s.id ?? s.subj_id),
+            code: String(s.code ?? s.subj_code ?? "No Code"),
+            name: String(s.name ?? s.subj_name ?? "No Name"),
+          }));
           setFilteredSubjects(mapped);
         } else {
-          const sec = sections.find((x) => x.id === sid);
+          // Fallback: use subject_ids on section if present, otherwise all subjects
           const secIds: string[] = Array.isArray((sec as any)?.subject_ids)
             ? (sec as any).subject_ids.map((x: any) => String(x))
             : [];
@@ -342,64 +345,73 @@ const ScheduleForm: React.FC<ScheduleFormProps> = ({
           }
         }
       } catch {
-        setFilteredSubjects(subjects);
+        // On error, fall back similarly
+        const secIds: string[] = Array.isArray((sec as any)?.subject_ids)
+          ? (sec as any).subject_ids.map((x: any) => String(x))
+          : [];
+        if (secIds.length) {
+          setFilteredSubjects(subjects.filter((s) => secIds.includes(s.id)));
+        } else {
+          setFilteredSubjects(subjects);
+        }
       } finally {
         setLoading((p) => ({ ...p, sectionSubjects: false }));
       }
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [watched.section, sections, subjects]);
 
-  // SUBJECT -> PROFESSORS
-  // SUBJECT -> PROFESSORS
-useEffect(() => {
-  const sid = watched.section;
-  const subId = watched.subjectId;
-  form.setValue("professorId", ""); // clear previous prof when subject changes
+  // SUBJECT -> PROFESSORS (robust mapping: includes professor_id; resilient arg order)
+  useEffect(() => {
+    const sid = watched.section;
+    const subId = watched.subjectId;
+    form.setValue("professorId", ""); // clear previous prof when subject changes
 
-  if (!subId) {
-    setFilteredProfessors([]);
-    return;
-  }
-
-  (async () => {
-    setLoading((p) => ({ ...p, subjectProfessors: true }));
-    try {
-      // try subject + section first, then subject-only
-      const res =
-        (await apiService.getSubjectProfessors?.(subId, sid)) ??
-        (await apiService.getSubjectProfessors?.(subId));
-
-      if (res?.success) {
-        // ✅ accept multiple response shapes
-        const raw =
-          Array.isArray(res.data)
-            ? res.data
-            : Array.isArray((res.data as any)?.professors)
-            ? (res.data as any).professors
-            : Array.isArray((res.data as any)?.data)
-            ? (res.data as any).data
-            : [];
-
-        const mapped: Professor[] = raw.map((p: any) => ({
-          id: (p.prof_id || p.id || "").toString(),
-          name: p.prof_name || p.name || "Unknown Professor",
-          subjectCount: parseInt(p.subject_count || p.subjectCount || "0"),
-        }));
-
-        setFilteredProfessors(mapped);
-      } else {
-        setFilteredProfessors([]); // explicit none if API says no
-      }
-    } catch {
+    if (!subId) {
       setFilteredProfessors([]);
-    } finally {
-      setLoading((p) => ({ ...p, subjectProfessors: false }));
+      return;
     }
-  })();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [watched.subjectId, watched.section]);
 
+    (async () => {
+      setLoading((p) => ({ ...p, subjectProfessors: true }));
+      try {
+        // Try common permutations just in case the service has a different signature
+        const res =
+          (await apiService.getSubjectProfessors?.(subId, sid)) ??
+          (await apiService.getSubjectProfessors?.(sid, subId)) ??
+          (await apiService.getSubjectProfessors?.(subId));
+
+        if (res?.success) {
+          const raw =
+            Array.isArray(res.data)
+              ? res.data
+              : Array.isArray((res.data as any)?.professors)
+              ? (res.data as any).professors
+              : Array.isArray((res.data as any)?.data)
+              ? (res.data as any).data
+              : [];
+
+          const mapped: Professor[] = raw
+            .filter(Boolean)
+            .map((p: any) => ({
+              id: (p.prof_id ?? p.professor_id ?? p.id ?? "").toString(),
+              name: p.prof_name ?? p.name ?? p.full_name ?? "Unknown Professor",
+              subjectCount: parseInt(p.subject_count ?? p.subjectCount ?? "0"),
+            }))
+            .filter((p) => p.id); // drop empties to avoid Select value=""
+
+          setFilteredProfessors(mapped);
+        } else {
+          setFilteredProfessors([]);
+        }
+      } catch {
+        setFilteredProfessors([]);
+      } finally {
+        setLoading((p) => ({ ...p, subjectProfessors: false }));
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [watched.subjectId, watched.section]);
 
   const fetchProfessors = async () => {
     setLoading((p) => ({ ...p, professors: true }));
@@ -408,11 +420,11 @@ useEffect(() => {
       if (res.success && Array.isArray(res.data)) {
         setProfessors(
           res.data
-            .filter((p: any) => p && (p.prof_id || p.id))
+            .filter((p: any) => p && (p.prof_id || p.professor_id || p.id))
             .map((p: any) => ({
-              id: (p.prof_id || p.id).toString(),
-              name: p.prof_name || p.name || "Unknown Professor",
-              subjectCount: parseInt(p.subject_count || p.subjectCount || "0"),
+              id: (p.prof_id ?? p.professor_id ?? p.id).toString(),
+              name: p.prof_name ?? p.name ?? p.full_name ?? "Unknown Professor",
+              subjectCount: parseInt(p.subject_count ?? p.subjectCount ?? "0"),
             }))
         );
       }
@@ -685,13 +697,13 @@ useEffect(() => {
     const payload = {
       school_year: values.schoolYear,
       semester: values.semester,
-      subj_id: parseInt(values.subjectId),
-      prof_id: parseInt(values.professorId),
+      subj_id: /^\d+$/.test(values.subjectId) ? Number(values.subjectId) : values.subjectId,
+      prof_id: /^\d+$/.test(values.professorId) ? Number(values.professorId) : values.professorId,
       schedule_type: values.scheduleType,
       start_time: values.startTime,
       end_time: values.endTime,
-      room_id: values.room ? parseInt(values.room) : undefined,
-      section_id: parseInt(values.section),
+      room_id: values.room && /^\d+$/.test(values.room) ? Number(values.room) : values.room ? values.room : undefined,
+      section_id: /^\d+$/.test(values.section) ? Number(values.section) : values.section,
       days: values.days,
     };
 
