@@ -119,10 +119,10 @@ const SectionForm: React.FC<SectionFormProps> = ({
   });
 
   useEffect(() => {
-    const values = editingSection
+    const values: z.infer<typeof formSchema> = editingSection
       ? {
           section_name: editingSection.section_name ?? "",
-          grade_level: editingSection.grade_level ?? "11",
+          grade_level: (editingSection.grade_level as "11" | "12") ?? "11",
           number_of_students:
             editingSection.number_of_students != null ? String(editingSection.number_of_students) : "",
           strand: editingSection.strand ?? "",
