@@ -26,8 +26,8 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import axios from "axios";
 
-const ABS_SUBJECTS_URL = "http://localhost/spcc_database/subjects.php";
-const ABS_PROFESSORS_URL = "http://localhost/spcc_database/professors.php";
+const ABS_SUBJECTS_URL = "https://spcc-scheduler.site/subjects.php";
+const ABS_PROFESSORS_URL = "https://spcc-scheduler.site/professors.php";
 
 const MAX_SUBJECTS = 8;
 

@@ -35,7 +35,7 @@ const AssignSubjectsDialog: React.FC<Props> = ({
   open,
   onOpenChange,
   section,
-  apiBase = "http://localhost/spcc_database",
+  apiBase = "https://spcc-scheduler.site",
   onSaved,
 }) => {
   const [allSubjects, setAllSubjects] = useState<Subject[]>([]);

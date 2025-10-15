@@ -19,7 +19,6 @@ import {
   Smartphone,
   Pencil,
   Wand2,
-  ClipboardCheck,
   MoreVertical,
   CalendarDays,
 } from "lucide-react";
@@ -113,10 +112,7 @@ type TabFilter = "all" | "auto" | "manual";
 /* ----------------- Utils ----------------- */
 const deriveOrigin = (raw: any): Origin => {
   const o = (raw?.origin || "").toString().toLowerCase();
-
-  // Treat any "auto*" origin (e.g., "auto-default") as auto
   if (o.startsWith("auto")) return "auto";
-
   if (
     raw?.is_auto_generated === true ||
     raw?.auto_generated === true ||
@@ -178,7 +174,6 @@ const ScheduleManagement: React.FC = () => {
   const [professors, setProfessors] = useState<Professor[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Default to CALENDAR view
   const [viewMode, setViewMode] = useState<ViewMode>("calendar");
 
   const [selectedSchedule, setSelectedSchedule] = useState<Schedule | null>(null);
@@ -203,7 +198,6 @@ const ScheduleManagement: React.FC = () => {
   const [scheduleToEdit, setScheduleToEdit] = useState<Schedule | null>(null);
   const [selectedProfessorId, setSelectedProfessorId] = useState<string>("");
 
-  // Version to force-remount calendar after data refresh
   const [dataVersion, setDataVersion] = useState(0);
 
   /* ----- Stats ----- */
@@ -221,16 +215,14 @@ const ScheduleManagement: React.FC = () => {
   const fetchSchedules = async (): Promise<number> => {
     setLoading(true);
     try {
-      // send a cache buster to avoid 304/proxy/browser caches
       const response = await apiService.getSchedules({
         school_year: settings.schoolYear,
         semester: settings.semester,
-        _t: Date.now(), // cache-bust query param
+        _t: Date.now(),
       });
 
       if (response.success && Array.isArray(response.data)) {
         const mapped = response.data.map((schedule: any) => ({
-          // ---- robust id mapping (prevents "undefined" and supports legacy keys) ----
           schedule_id:
             (
               schedule.schedule_id ??
@@ -274,8 +266,6 @@ const ScheduleManagement: React.FC = () => {
 
         const normalized = mapped.map(normalizeStaticSlot);
         setSchedules(normalized);
-
-        // Force WeekCalendar to remount (avoid stale memoized layout)
         setDataVersion((v) => v + 1);
 
         return normalized.length;
@@ -309,31 +299,6 @@ const ScheduleManagement: React.FC = () => {
     fetchProfessors();
   }, [settings.schoolYear, settings.semester]);
 
-  /* ----- Sync & Actions ----- */
-  const syncToMobile = async () => {
-    setIsSyncing(true);
-    try {
-      const response = await apiService.syncToFirebase();
-      if (response.success) {
-        toast({ title: "Sync Successful", description: "Schedules have been synced to mobile app" });
-      } else {
-        toast({
-          title: "Sync Failed",
-          description: response.message || "Failed to sync to mobile app",
-          variant: "destructive",
-        });
-      }
-    } catch {
-      toast({
-        title: "Sync Error",
-        description: "An error occurred while syncing to mobile app",
-        variant: "destructive",
-      });
-    } finally {
-      setIsSyncing(false);
-    }
-  };
-
   const runAutomation = async (payload: any) => {
     setIsChecking(true);
     try {
@@ -347,10 +312,8 @@ const ScheduleManagement: React.FC = () => {
 
       if (res.success) {
         let afterCount = await fetchSchedules();
-
-        // If the count didn't change yet, retry a few short times to dodge write-lag
         if (afterCount === beforeCount) {
-          const waits = [150, 300, 500]; // ms
+          const waits = [150, 300, 500];
           for (const w of waits) {
             await new Promise((r) => setTimeout(r, w));
             afterCount = await fetchSchedules();
@@ -381,7 +344,6 @@ const ScheduleManagement: React.FC = () => {
   const deleteSchedule = async () => {
     if (!scheduleToDelete) return;
     try {
-      // If it's purely digits, send a number; otherwise send the raw string
       const idRaw = scheduleToDelete;
       const idParam = /^\d+$/.test(idRaw) ? Number(idRaw) : idRaw;
       const response = await apiService.deleteSchedule(idParam as any);
@@ -468,16 +430,12 @@ const ScheduleManagement: React.FC = () => {
   }, [schedules, filters, tab]);
 
   /* ----------------- Calendar View ----------------- */
-  // Calendar window
   const CAL_START = "07:30";
   const CAL_END   = "16:30";
   const startMin = toMinutes(CAL_START);
   const endMin   = toMinutes(CAL_END);
+  const PX_PER_MIN = 1.2;
 
-  // Pixels per minute (affects overall calendar height)
-  const PX_PER_MIN = 1.2; // 540min * 1.2 = 648px tall grid
-
-  // Build time ticks for the ruler (every 30 minutes)
   const timeTicks = useMemo(() => {
     const ticks: { label: string; minutes: number }[] = [];
     for (let m = startMin; m <= endMin; m += 30) {
@@ -488,7 +446,6 @@ const ScheduleManagement: React.FC = () => {
     return ticks;
   }, [startMin, endMin]);
 
-  // Events for WeekCalendar
   const calendarEvents: WeekCalEvent[] = useMemo(() => {
     const toDay = (d: string) => d.toLowerCase() as WeekCalEvent["day"];
     const list: WeekCalEvent[] = [];
@@ -499,7 +456,7 @@ const ScheduleManagement: React.FC = () => {
           day: toDay(d),
           start: s.start_time,
           end: s.end_time,
-          title: (s.subj_code || s.schedule_type || "").toString(),   // shows HOMEROOM / RECESS too
+          title: (s.subj_code || s.schedule_type || "").toString(),
           subtitle: s.section_name,
           meta: `${s.professor_name || "—"}${s.room_number ? ` • ${s.room_number}` : ""}`,
           schedule_type: s.schedule_type,
@@ -519,8 +476,8 @@ const ScheduleManagement: React.FC = () => {
     );
   };
 
-  const isReviewable = (s: Schedule) => s.origin === "auto" && s.status?.toLowerCase?.() === "pending";
-  const goToReview = (id: string) => navigate(`/scheduling/review/${id}`);
+  // NEW: edit route helper
+  const goToEdit = (id: string) => navigate(`/scheduling/edit/${id}`);
 
   const CardActionsMenu: React.FC<{ s: Schedule }> = ({ s }) => (
     <DropdownMenu>
@@ -540,27 +497,31 @@ const ScheduleManagement: React.FC = () => {
       >
         <DropdownMenuLabel>Actions</DropdownMenuLabel>
         <DropdownMenuSeparator />
+
+        {/* Edit Schedule */}
+        <DropdownMenuItem
+          onClick={(e) => {
+            e.stopPropagation();
+            goToEdit(s.schedule_id);
+          }}
+        >
+          <Pencil className="mr-2 h-4 w-4" />
+          Edit Schedule
+        </DropdownMenuItem>
+
+        {/* Change Professor */}
         <DropdownMenuItem
           onClick={(e) => {
             e.stopPropagation();
             openEditProfessor(s);
           }}
         >
-          <Pencil className="mr-2 h-4 w-4" />
+          <Users className="mr-2 h-4 w-4" />
           Change Professor
         </DropdownMenuItem>
-        {isReviewable(s) && (
-          <DropdownMenuItem
-            onClick={(e) => {
-              e.stopPropagation();
-              goToReview(s.schedule_id);
-            }}
-          >
-            <ClipboardCheck className="mr-2 h-4 w-4" />
-            Review
-          </DropdownMenuItem>
-        )}
+
         <DropdownMenuSeparator />
+
         <DropdownMenuItem
           className="text-red-600 focus:text-red-600"
           onClick={(e) => {
@@ -580,7 +541,6 @@ const ScheduleManagement: React.FC = () => {
     </DropdownMenu>
   );
 
-  /* ----- Existing Cards/Table (kept) ----- */
   const renderScheduleCard = (schedule: Schedule) => (
     <Card
       key={schedule.schedule_id}
@@ -649,7 +609,6 @@ const ScheduleManagement: React.FC = () => {
     </Card>
   );
 
-  /* ----------------- Render ----------------- */
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="container mx-auto py-6 px-4 space-y-6">
@@ -664,15 +623,6 @@ const ScheduleManagement: React.FC = () => {
             <Button variant="outline" onClick={fetchSchedules} disabled={loading}>
               <RefreshCw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} />
               Refresh
-            </Button>
-            <Button
-              variant="outline"
-              onClick={syncToMobile}
-              disabled={isSyncing}
-              className="bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100"
-            >
-              <Smartphone className={`mr-2 h-4 w-4 ${isSyncing ? "animate-pulse" : ""}`} />
-              {isSyncing ? "Syncing..." : "Sync to Mobile"}
             </Button>
             <Button onClick={() => navigate("/scheduling/new")}>
               <Plus className="mr-2 h-4 w-4" />
@@ -871,7 +821,7 @@ const ScheduleManagement: React.FC = () => {
           </Card>
         ) : viewMode === "calendar" ? (
           <WeekCalendar
-            key={`${dataVersion}-${tab}`}   // force-remount when fresh data or tab changes
+            key={`${dataVersion}-${tab}`}
             events={calendarEvents}
             startTime="07:30"
             endTime="16:30"
@@ -889,7 +839,6 @@ const ScheduleManagement: React.FC = () => {
               setIsDetailsOpen(true);
             }}
             onEditProfessor={(s) => openEditProfessor(s)}
-            onReview={(s) => goToReview(s.schedule_id)}
             onDelete={(s) => {
               if (s?.schedule_id) {
                 setScheduleToDelete(s.schedule_id);
@@ -908,7 +857,6 @@ const ScheduleManagement: React.FC = () => {
               setIsDetailsOpen(true);
             }}
             onEditProfessor={(s) => openEditProfessor(s)}
-            onReview={(s) => goToReview(s.schedule_id)}
             onDelete={(s) => {
               if (s?.schedule_id) {
                 setScheduleToDelete(s.schedule_id);
@@ -982,17 +930,17 @@ const ScheduleManagement: React.FC = () => {
             )}
 
             <DialogFooter className="gap-2">
-              {selectedSchedule && isReviewable(selectedSchedule) && (
-                <Button onClick={() => goToReview(selectedSchedule.schedule_id)}>
-                  <ClipboardCheck className="h-4 w-4 mr-2" />
-                  Review
-                </Button>
-              )}
               {selectedSchedule && (
-                <Button variant="outline" onClick={() => openEditProfessor(selectedSchedule)}>
-                  <Pencil className="h-4 w-4 mr-2" />
-                  Change Professor
-                </Button>
+                <>
+                  <Button onClick={() => goToEdit(selectedSchedule.schedule_id)}>
+                    <Pencil className="h-4 w-4 mr-2" />
+                    Edit Schedule
+                  </Button>
+                  <Button variant="outline" onClick={() => openEditProfessor(selectedSchedule)}>
+                    <Users className="h-4 w-4 mr-2" />
+                    Change Professor
+                  </Button>
+                </>
               )}
               <Button variant="outline" onClick={() => setIsDetailsOpen(false)}>
                 Close

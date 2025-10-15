@@ -61,7 +61,7 @@ const SchoolHeadManagement = () => {
       setLoading(true);
       setError(null);
       const response = await fetch(
-        "http://localhost/spcc_database/school_head.php"
+        "https://spcc-scheduler.site/school_head.php"
       );
 
       if (!response.ok) {
@@ -117,7 +117,7 @@ const SchoolHeadManagement = () => {
       console.log("Request body:", requestBody);
 
       const response = await fetch(
-        "http://localhost/spcc_database/school_head.php",
+        "https://spcc-scheduler.site/school_head.php",
         {
           method: "POST",
           headers: {
@@ -177,7 +177,7 @@ const SchoolHeadManagement = () => {
   ) => {
     try {
       const response = await fetch(
-        `http://localhost/spcc_database/school_head.php?id=${id}`,
+        `https://spcc-scheduler.site/school_head.php?id=${id}`,
         {
           method: "PUT",
           headers: {
@@ -227,7 +227,7 @@ const SchoolHeadManagement = () => {
   const deleteSchoolHead = async (id: string) => {
     try {
       const response = await fetch(
-        `http://localhost/spcc_database/school_head.php?id=${id}`,
+        `https://spcc-scheduler.site/school_head.php?id=${id}`,
         {
           method: "DELETE",
         }

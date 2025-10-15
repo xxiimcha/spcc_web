@@ -1,6 +1,6 @@
 import axios, { AxiosResponse } from "axios";
 
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost/spcc_database";
+const API_BASE = import.meta.env.VITE_API_BASE || "https://spcc-scheduler.site";
 
 const apiClient = axios.create({
   baseURL: API_BASE,

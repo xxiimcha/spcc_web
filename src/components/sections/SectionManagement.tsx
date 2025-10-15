@@ -89,7 +89,7 @@ interface Section {
   subject_ids_raw?: string | null; // optional raw JSON from API
 }
 
-const API_BASE = "http://localhost/spcc_database";
+const API_BASE = "https://spcc-scheduler.site";
 
 const SectionManagement: React.FC = () => {
   const [sections, setSections] = useState<Section[]>([]);

@@ -36,7 +36,7 @@ export const SystemSettingsProvider: React.FC<SystemSettingsProviderProps> = ({ 
       setError(null);
 
       // 1) Try backend first
-      const res = await axios.get("http://localhost/spcc_database/system_settings.php");
+      const res = await axios.get("https://spcc-scheduler.site/system_settings.php");
       const apiOk = res?.data?.status === "success" && res?.data?.data;
 
       if (apiOk) {
@@ -72,7 +72,7 @@ export const SystemSettingsProvider: React.FC<SystemSettingsProviderProps> = ({ 
   const updateSettings = async (newSettings: SystemSettings) => {
     setSettings(newSettings);
     localStorage.setItem("systemSettings", JSON.stringify(newSettings));
-    // await axios.post("http://localhost/spcc_database/system_settings.php", newSettings);
+    // await axios.post("https://spcc-scheduler.site/system_settings.php", newSettings);
   };
 
   const refreshSettings = async () => { await loadSettings(); };

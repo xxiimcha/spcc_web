@@ -119,8 +119,8 @@ const RoomForm: React.FC<RoomFormProps> = ({
       };
 
       const resp = room
-        ? await axios.put(`http://localhost/spcc_database/rooms.php?id=${room.id}`, payload)
-        : await axios.post("http://localhost/spcc_database/rooms.php", payload);
+        ? await axios.put(`https://spcc-scheduler.site/rooms.php?id=${room.id}`, payload)
+        : await axios.post("https://spcc-scheduler.site/rooms.php", payload);
 
       if (resp.data.success || resp.data.status === "success") {
         reset();

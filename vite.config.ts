@@ -36,7 +36,7 @@ export default defineConfig({
     allowedHosts: true,
     proxy: {
       "/api": {
-        target: "http://localhost/spcc_database",
+        target: "https://spcc-scheduler.site",
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, ""),
         configure: (proxy, _options) => {

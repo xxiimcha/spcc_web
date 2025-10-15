@@ -113,7 +113,7 @@ const RoomSectionDialog: React.FC<RoomSectionDialogProps> = ({
       setLoadingSections(true);
       setError(null);
       try {
-        const { data } = await axios.get("http://localhost/spcc_database/sections.php");
+        const { data } = await axios.get("https://spcc-scheduler.site/sections.php");
         if (!data?.success || !Array.isArray(data.data)) {
           throw new Error("Invalid sections response");
         }
@@ -139,7 +139,7 @@ const RoomSectionDialog: React.FC<RoomSectionDialogProps> = ({
     setError(null);
     try {
       const secRes = await axios.get(
-        `http://localhost/spcc_database/sections.php?id=${selectedSection}`
+        `https://spcc-scheduler.site/sections.php?id=${selectedSection}`
       );
       if (!secRes.data?.success) throw new Error("Failed to fetch section data");
 
@@ -163,7 +163,7 @@ const RoomSectionDialog: React.FC<RoomSectionDialogProps> = ({
       };
 
       const resp = await axios.put(
-        `http://localhost/spcc_database/sections.php?id=${selectedSection}`,
+        `https://spcc-scheduler.site/sections.php?id=${selectedSection}`,
         payload
       );
 
@@ -272,7 +272,7 @@ const RoomManagement = () => {
     setLoading(true);
     setError(null);
     try {
-      const response = await axios.get("http://localhost/spcc_database/rooms.php");
+      const response = await axios.get("https://spcc-scheduler.site/rooms.php");
       if (response.data.success && Array.isArray(response.data.data)) {
         setRooms(response.data.data);
       } else {
@@ -361,7 +361,7 @@ const RoomManagement = () => {
     if (!roomToDelete) return;
     try {
       const response = await axios.delete(
-        `http://localhost/spcc_database/rooms.php?id=${roomToDelete}`
+        `https://spcc-scheduler.site/rooms.php?id=${roomToDelete}`
       );
       if (response.data.success || response.data.message?.includes("deleted successfully")) {
         setRooms((prev) => prev.filter((r) => r.id !== roomToDelete));
@@ -416,7 +416,7 @@ const RoomManagement = () => {
 
   const fetchRoomDetails = async (roomId: number) => {
     try {
-      const response = await axios.get(`http://localhost/spcc_database/rooms.php?id=${roomId}`);
+      const response = await axios.get(`https://spcc-scheduler.site/rooms.php?id=${roomId}`);
       if (response.data.success) setSelectedRoom(response.data.data);
       else throw new Error("Failed to fetch room details");
     } catch (e) {

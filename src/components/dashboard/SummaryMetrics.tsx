@@ -38,7 +38,7 @@ const SummaryMetrics = ({
       setError(null);
 
       const response = await axios.get(
-        "http://localhost/spcc_database/dashboard_metrics.php"
+        "https://spcc-scheduler.site/dashboard_metrics.php"
       );
 
       if (response.data.success) {

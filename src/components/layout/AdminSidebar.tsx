@@ -92,7 +92,7 @@ const AdminSidebar = ({ isOpen, onToggle }: AdminSidebarProps) => {
   const [schoolYears, setSchoolYears] = useState<string[]>([]);
   const [selectedSY, setSelectedSY] = useState<string>("");
 
-  const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost/spcc_database";
+  const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "https://spcc-scheduler.site";
 
   const handleLogout = () => {
     logout();

@@ -33,8 +33,8 @@ import { useToast } from "@/components/ui/use-toast";
 import SuccessMessage from "@/components/popupmsg/SuccessMessage";
 import { AlertTriangle } from "lucide-react";
 
-const SUBJECTS_URL = "http://localhost/spcc_database/subjects.php";
-const SECTION_SUBJECTS_URL = "http://localhost/spcc_database/section_subjects.php";
+const SUBJECTS_URL = "https://spcc-scheduler.site/subjects.php";
+const SECTION_SUBJECTS_URL = "https://spcc-scheduler.site/section_subjects.php";
 
 const formSchema = z.object({
   section_name: z
@@ -259,11 +259,11 @@ const SectionForm: React.FC<SectionFormProps> = ({
       let response;
       if (editingSection) {
         response = await axios.put(
-          `http://localhost/spcc_database/sections.php?id=${editingSection.section_id}`,
+          `https://spcc-scheduler.site/sections.php?id=${editingSection.section_id}`,
           payload
         );
       } else {
-        response = await axios.post("http://localhost/spcc_database/sections.php", payload);
+        response = await axios.post("https://spcc-scheduler.site/sections.php", payload);
       }
 
       const ok =

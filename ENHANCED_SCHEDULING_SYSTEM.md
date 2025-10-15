@@ -239,7 +239,7 @@ import EnhancedScheduling from "@/pages/EnhancedScheduling";
 ### Base URL
 
 ```
-http://localhost/spcc_database/
+https://spcc-scheduler.site/
 ```
 
 ### Available Endpoints

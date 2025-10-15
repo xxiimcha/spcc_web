@@ -48,7 +48,7 @@ $dbpass = ''; // Your database password
 Place `auth_school_head.php` in your PHP backend directory:
 
 ```
-http://localhost/spcc_database/auth_school_head.php
+https://spcc-scheduler.site/auth_school_head.php
 ```
 
 ### 3. Database Table Structure

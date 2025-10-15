@@ -100,13 +100,13 @@ CREATE TABLE sections (
 1. **Test Room Assignment Query**:
 
    ```bash
-   curl -X GET "http://localhost/spcc_database/get_room_assigned_sections.php"
+   curl -X GET "https://spcc-scheduler.site/get_room_assigned_sections.php"
    ```
 
 2. **Test Available Slots**:
 
    ```bash
-   curl -X POST "http://localhost/spcc_database/get_available_time_slots.php" \
+   curl -X POST "https://spcc-scheduler.site/get_available_time_slots.php" \
      -H "Content-Type: application/json" \
      -d '{
        "school_year": "2024-2025",
@@ -119,7 +119,7 @@ CREATE TABLE sections (
 
 3. **Test Conflict Detection**:
    ```bash
-   curl -X POST "http://localhost/spcc_database/enhanced_conflict_detection.php" \
+   curl -X POST "https://spcc-scheduler.site/enhanced_conflict_detection.php" \
      -H "Content-Type: application/json" \
      -d '{
        "school_year": "2024-2025",

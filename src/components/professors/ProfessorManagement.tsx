@@ -166,7 +166,7 @@ const ProfessorManagement = () => {
 
   const addProfessor = async (professorData: Omit<Professor, "id">) => {
     try {
-      const response = await fetch("http://localhost/spcc_database/professors.php", {
+      const response = await fetch("https://spcc-scheduler.site/professors.php", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(professorData),
@@ -190,7 +190,7 @@ const ProfessorManagement = () => {
 
   const updateProfessor = async (id: string, professorData: Omit<Professor, "id">) => {
     try {
-      const response = await fetch(`http://localhost/spcc_database/professors.php?id=${id}`, {
+      const response = await fetch(`https://spcc-scheduler.site/professors.php?id=${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(professorData),
@@ -214,7 +214,7 @@ const ProfessorManagement = () => {
 
   const deleteProfessor = async (id: string) => {
     try {
-      const response = await fetch(`http://localhost/spcc_database/professors.php?id=${id}`, {
+      const response = await fetch(`https://spcc-scheduler.site/professors.php?id=${id}`, {
         method: "DELETE",
       });
       const result = await response.json();
@@ -244,7 +244,7 @@ const ProfessorManagement = () => {
   const resetPassword = async (prof: Professor) => {
     try {
       const temp = generateTempPassword();
-      const res = await fetch(`http://localhost/spcc_database/professors.php?id=${prof.id}`, {
+      const res = await fetch(`https://spcc-scheduler.site/professors.php?id=${prof.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ password: temp }), // ONLY the password
@@ -275,7 +275,7 @@ const ProfessorManagement = () => {
 
   const fetchSubjectsFromProfessorsAPI = async (professorId: string): Promise<Subject[] | null> => {
     try {
-      const res = await fetch(`http://localhost/spcc_database/professors.php?id=${professorId}`);
+      const res = await fetch(`https://spcc-scheduler.site/professors.php?id=${professorId}`);
       const json = await res.json();
       if (json?.status === "success" && Array.isArray(json?.data?.subjects)) {
         return json.data.subjects.map((s: any) => ({
@@ -293,7 +293,7 @@ const ProfessorManagement = () => {
   const fetchSubjectsFromListAPI = async (professorId: string): Promise<Subject[]> => {
     try {
       const res = await fetch(
-        `http://localhost/spcc_database/get_list_of_subjects.php?professor_id=${professorId}`
+        `https://spcc-scheduler.site/get_list_of_subjects.php?professor_id=${professorId}`
       );
       const data = await res.json();
       if (data?.status === "success" && Array.isArray(data.subjects)) {

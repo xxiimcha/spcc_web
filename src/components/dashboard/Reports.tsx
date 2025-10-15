@@ -22,7 +22,7 @@ const Reports = () => {
     try {
       setLoading(true);
       setError(null);
-      const { data } = await axios.get("http://localhost/spcc_database/dashboard/availability_checker.php", {
+      const { data } = await axios.get("https://spcc-scheduler.site/dashboard/availability_checker.php", {
         params: { action: "all" },
       });
       if (data?.success) {
