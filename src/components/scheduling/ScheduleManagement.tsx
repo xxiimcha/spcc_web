@@ -503,17 +503,6 @@ const ScheduleManagement: React.FC = () => {
         <DropdownMenuLabel>Actions</DropdownMenuLabel>
         <DropdownMenuSeparator />
 
-        {/* Edit Schedule */}
-        <DropdownMenuItem
-          onClick={(e) => {
-            e.stopPropagation();
-            goToEdit(s.schedule_id);
-          }}
-        >
-          <Pencil className="mr-2 h-4 w-4" />
-          Edit Schedule
-        </DropdownMenuItem>
-
         {/* Change Professor */}
         <DropdownMenuItem
           onClick={(e) => {
@@ -937,10 +926,6 @@ const ScheduleManagement: React.FC = () => {
             <DialogFooter className="gap-2">
               {selectedSchedule && (
                 <>
-                  <Button onClick={() => goToEdit(selectedSchedule.schedule_id)}>
-                    <Pencil className="h-4 w-4 mr-2" />
-                    Edit Schedule
-                  </Button>
                   <Button variant="outline" onClick={() => openEditProfessor(selectedSchedule)}>
                     <Users className="h-4 w-4 mr-2" />
                     Change Professor

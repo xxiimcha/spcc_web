@@ -468,7 +468,6 @@ const ScheduleForm: React.FC<ScheduleFormProps> = ({ onSubmit, onCancel, title =
 
   useEffect(() => {
     checkConflictsAndSuggest();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     watched.section, watched.professorId, watched.subjectId,
     JSON.stringify(watched.days), watched.startTime, watched.endTime,
@@ -477,7 +476,10 @@ const ScheduleForm: React.FC<ScheduleFormProps> = ({ onSubmit, onCancel, title =
   ]);
 
   function deriveDesiredDuration(start?: number, end?: number) {
-    if (start !== undefined && end !== undefined && end > start) return end - start;
+    if (start !== undefined && end !== undefined && end > start) {
+      const raw = end - start;
+      return raw <= 45 ? 30 : 60;
+    }
     return 60;
   }
 
@@ -494,31 +496,47 @@ const ScheduleForm: React.FC<ScheduleFormProps> = ({ onSubmit, onCancel, title =
     const result: Array<{ day: string; start: string; end: string }> = [];
     if (!sectionId || !professorId || days.length === 0) return result;
 
+    const duration = desiredDurationMin <= 45 ? 30 : 60;
+
     const dayOrder = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
     const sortedDays = dayOrder.filter((d) => days.includes(d));
+
     const startBound = toMin(SCHOOL_START);
-    const endBound = toMin(SCHOOL_END);
+    const endBound   = toMin(SCHOOL_END);
     const lunchStart = toMin(LUNCH_START);
-    const lunchEnd = toMin(LUNCH_END);
+    const lunchEnd   = toMin(LUNCH_END);
     const isOnsiteLocal = scheduleType === "Onsite";
+
+    const alignTo30 = (m: number) => {
+      const rem = m % 30;
+      return rem === 0 ? m : m + (30 - rem);
+    };
 
     for (const day of sortedDays) {
       const dayScheds = schedules.filter((s) => s.days.includes(day));
-      for (let t = startBound; t + desiredDurationMin <= endBound && result.length < SUGGESTION_COUNT; t += 10) {
-        const tEnd = t + desiredDurationMin;
+
+      for (let t = alignTo30(startBound); t + duration <= endBound && result.length < SUGGESTION_COUNT; t += 30) {
+        const tEnd = t + duration;
+
         if (isOnsiteLocal && overlaps(t, tEnd, lunchStart, lunchEnd)) continue;
 
-        const sectionClash = dayScheds.some((s) => s.section_id === sectionId && overlaps(t, tEnd, s.start, s.end));
-        const profClash = dayScheds.some((s) => s.prof_id === professorId && overlaps(t, tEnd, s.start, s.end));
+        const sectionClash = dayScheds.some(
+          (s) => s.section_id === sectionId && overlaps(t, tEnd, s.start, s.end)
+        );
+        const profClash = dayScheds.some(
+          (s) => s.prof_id === professorId && overlaps(t, tEnd, s.start, s.end)
+        );
 
-        // Allow professor overlaps for Online/Async
-        if (!sectionClash && (!isOnlineAsync || (isOnlineAsync && !sectionClash))) {
-          if (!profClash || !isOnlineAsync) result.push({ day, start: fromMin(t), end: fromMin(tEnd) });
-          if (isOnlineAsync && !sectionClash) result.push({ day, start: fromMin(t), end: fromMin(tEnd) });
+        const allowProfOverlap = (scheduleType === "Online" && watched.onlineMode === "Asynchronous");
+
+        if (!sectionClash && (!profClash || allowProfOverlap)) {
+          result.push({ day, start: fromMin(t), end: fromMin(tEnd) });
         }
       }
+
       if (result.length >= SUGGESTION_COUNT) break;
     }
+
     return result;
   }
 
@@ -535,23 +553,18 @@ const ScheduleForm: React.FC<ScheduleFormProps> = ({ onSubmit, onCancel, title =
 
     const sectionsToCheck = [section, ...(additionalSections || [])].filter(Boolean) as string[];
 
-    // prevent duplicate subject within the same section (even for async)
     if (subjectId && sectionsToCheck.length > 0) {
       for (const secId of sectionsToCheck) {
         const dup = allSchedules.some((s) => s.section_id === secId && s.subj_id === subjectId);
-        if (dup) errs.push(`This subject is already scheduled for section ${secId}.`);
+        if (dup) errs.push(`Section already has a schedule for this subject.`);
       }
     }
 
-    // lunch conflict only relevant for onsite
     if (scheduleType === "Onsite" && start !== undefined && end !== undefined) {
       const ls = toMin(LUNCH_START); const le = toMin(LUNCH_END);
       if (overlaps(start, end, ls, le)) errs.push("Lunch break conflict: onsite classes cannot cross 12:00–1:00 PM.");
     }
 
-    // time conflicts:
-    // - always check section overlaps (students can’t be in two places)
-    // - skip professor overlaps when Online/Async (allowed to combine across sections)
     if (start !== undefined && end !== undefined && chosenDays.length > 0) {
       for (const secId of sectionsToCheck) {
         const secOverlap = allSchedules.some(
