@@ -3,7 +3,13 @@ import { Badge } from "@/components/ui/badge";
 import { Slider } from "@/components/ui/slider";
 import { CalendarDays } from "lucide-react";
 
-/* ========== Types ========== */
+type LegendItem = {
+  key: string;
+  label: string;
+  color: string;
+  border?: string;  
+};
+
 export type WeekDay =
   | "monday" | "tuesday" | "wednesday" | "thursday"
   | "friday" | "saturday" | "sunday";
@@ -11,8 +17,8 @@ export type WeekDay =
 export interface WeekCalEvent {
   id: string;
   day: WeekDay;
-  start: string; // "HH:MM"
-  end: string;   // "HH:MM"
+  start: string; 
+  end: string;   
   title: string;
   subtitle?: string;
   meta?: string;
@@ -153,28 +159,28 @@ export const WeekCalendar: React.FC<WeekCalendarProps> = ({
   }, [events, startMin, endMin, pxPerMin]);
 
   /* Legend: force show the three requested + add others present */
-  const legend = useMemo(() => {
-    // Always include these three in this order
-    const base = [
-      { key: "online_sync", label: "Online Synchronous", color: COLOR_ONLINE_SYNC },
-      { key: "online_async", label: "Online Asynchronous", color: COLOR_ONLINE_ASYNC },
-      { key: "onsite", label: "Onsite", color: COLOR_ONSITE, border: "#e5e7eb" },
-    ];
+  const legend = useMemo((): LegendItem[] => {
+  const base: LegendItem[] = [
+    { key: "online_sync",  label: "Online Synchronous",  color: COLOR_ONLINE_SYNC,  border: "#e5e7eb" },
+    { key: "online_async", label: "Online Asynchronous", color: COLOR_ONLINE_ASYNC, border: "#e5e7eb" },
+    { key: "onsite",       label: "Onsite",              color: COLOR_ONSITE,       border: "#e5e7eb" },
+  ];
 
-    // Add any extra types present (Homeroom/Recess/Other)
-    const extrasSet = new Set<string>();
-    for (const e of events) {
-      const t = (e.schedule_type || "Other").toLowerCase();
-      if (!["online", "onsite"].includes(t)) extrasSet.add(t);
-    }
-    const label = (t: string) => t === "other" ? "Other" : t.charAt(0).toUpperCase() + t.slice(1);
-    const extras = Array.from(extrasSet).map((t) => {
-      const { bg } = fallbackBgBorder(t);
-      return { key: `x-${t}`, label: label(t), color: bg };
-    });
+  const extrasSet = new Set<string>();
+  for (const e of events) {
+    const t = (e.schedule_type || "Other").toLowerCase();
+    if (!["online", "onsite"].includes(t)) extrasSet.add(t);
+  }
+  const label = (t: string) => (t === "other" ? "Other" : t.charAt(0).toUpperCase() + t.slice(1));
 
-    return [...base, ...extras];
+  const extras: LegendItem[] = Array.from(extrasSet).map((t) => {
+    const { bg, border } = fallbackBgBorder(t);
+    return { key: `x-${t}`, label: label(t), color: bg, border };
+  });
+
+  return [...base, ...extras];
   }, [events]);
+
 
   /* Counts per day */
   const countsByDay = useMemo(() => {

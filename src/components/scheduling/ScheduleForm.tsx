@@ -283,10 +283,8 @@ const ScheduleForm: React.FC<ScheduleFormProps> = ({ onSubmit, onCancel, title =
     (async () => {
       setLoading((p) => ({ ...p, subjectProfessors: true }));
       try {
-        const res =
-          (await apiService.getSubjectProfessors?.(subId, sid)) ??
-          (await apiService.getSubjectProfessors?.(sid, subId)) ??
-          (await apiService.getSubjectProfessors?.(subId));
+        const arg = /^\d+$/.test(subId) ? Number(subId) : subId;
+        const res = await (apiService.getSubjectProfessors as any)?.(arg);
 
         if (res?.success) {
           const raw =
@@ -296,13 +294,13 @@ const ScheduleForm: React.FC<ScheduleFormProps> = ({ onSubmit, onCancel, title =
             [];
 
           const mapped: Professor[] = raw
-            .filter(Boolean)
+            .filter((p: any) => p && (p.prof_id || p.professor_id || p.id))
             .map((p: any) => ({
               id: (p.prof_id ?? p.professor_id ?? p.id ?? "").toString(),
               name: p.prof_name ?? p.name ?? p.full_name ?? "Unknown Professor",
               subjectCount: parseInt(p.subject_count ?? p.subjectCount ?? "0"),
             }))
-            .filter((p) => p.id);
+            .filter((p: any) => p && (p.prof_id || p.professor_id || p.id))
 
           setFilteredProfessors(mapped);
         } else setFilteredProfessors([]);
@@ -408,10 +406,10 @@ const ScheduleForm: React.FC<ScheduleFormProps> = ({ onSubmit, onCancel, title =
   const loadSchedules = async () => {
     setLoading((p) => ({ ...p, schedules: true }));
     try {
-      const res = await apiService.getSchedules?.({
-        schoolYear: settings.schoolYear,
-        semester: settings.semester,
-      });
+        const res = await apiService.getSchedules?.({
+          school_year: settings.schoolYear,
+          semester: settings.semester,
+        });
       if (res?.success && Array.isArray(res.data)) {
         const mapped: NormSchedule[] = res.data
           .filter(Boolean)
@@ -1167,7 +1165,7 @@ const ScheduleForm: React.FC<ScheduleFormProps> = ({ onSubmit, onCancel, title =
                       loading.submission ||
                       conflicts.length > 0 ||
                       (!!watched.professorId && (profWeeklyCount[watched.professorId] || 0) >= MAX_WEEKLY_SCHEDULES) ||
-                      (watched.subjectId && availableProfessors.length === 0)
+                      (!!watched.subjectId && availableProfessors.length === 0)
                     }
                   >
                     {loading.submission

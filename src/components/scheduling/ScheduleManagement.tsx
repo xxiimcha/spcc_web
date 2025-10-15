@@ -211,14 +211,12 @@ const ScheduleManagement: React.FC = () => {
     return { total, today: todaySchedules, auto: autoCount, manual: manualCount };
   }, [schedules]);
 
-  /* ----- Data Fetch ----- */
   const fetchSchedules = async (): Promise<number> => {
     setLoading(true);
     try {
       const response = await apiService.getSchedules({
         school_year: settings.schoolYear,
         semester: settings.semester,
-        _t: Date.now(),
       });
 
       if (response.success && Array.isArray(response.data)) {

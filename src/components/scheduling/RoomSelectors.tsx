@@ -1,5 +1,6 @@
 import React from "react";
-import { Control, FormField, FormItem, FormLabel, FormMessage, FormControl as RHFControl } from "@/components/ui/form";
+import type { Control } from "react-hook-form";
+import { FormField, FormItem, FormLabel, FormMessage, FormControl } from "@/components/ui/form";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Room, Section } from "@/types/scheduling";
@@ -45,11 +46,11 @@ const RoomSelectors: React.FC<Props> = ({
               }}
               defaultValue={field.value || "Lecture"}
             >
-              <RHFControl>
+              <FormControl>
                 <SelectTrigger>
                   <SelectValue placeholder="Select room type" />
                 </SelectTrigger>
-              </RHFControl>
+              </FormControl>
               <SelectContent>
                 <SelectItem value="Lecture">Lecture</SelectItem>
                 <SelectItem value="Laboratory">Laboratory</SelectItem>
@@ -69,7 +70,7 @@ const RoomSelectors: React.FC<Props> = ({
             <FormItem>
               <FormLabel>Laboratory Room</FormLabel>
               <Select onValueChange={field.onChange} value={field.value}>
-                <RHFControl>
+                <FormControl>
                   <SelectTrigger>
                     {loadingRooms ? (
                       <span>Loading rooms...</span>
@@ -77,7 +78,7 @@ const RoomSelectors: React.FC<Props> = ({
                       <SelectValue placeholder="Select a laboratory room" />
                     )}
                   </SelectTrigger>
-                </RHFControl>
+                </FormControl>
                 <SelectContent>
                   {availableRooms.map((room) => (
                     <SelectItem key={room.id} value={room.id}>

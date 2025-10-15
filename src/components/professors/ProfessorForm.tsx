@@ -63,7 +63,7 @@ const makeSchema = (isEdit: boolean) =>
       .min(1, { message: "Add at least one specialization" }),
     subject_ids: z
       .array(z.number())
-      .nonempty({ message: "Assign at least one subject" }),
+      .min(1, { message: "Assign at least one subject" }),
   });
 
 interface ProfessorFormProps {
@@ -484,8 +484,8 @@ const ProfessorForm = ({
                         <Input
                           placeholder="John Doe"
                           {...field}
-                          onBlur={(e) => {
-                            field.onBlur?.(e);
+                          onBlur={() => {
+                            field.onBlur();
                             const uname = form.getValues("username");
                             if (!uname) handleGenerateUsername();
                           }}
