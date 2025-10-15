@@ -40,14 +40,24 @@ const Dashboard = () => {
     try {
       setLoading(true);
 
+      // ----- Activities (already normalized by apiService) -----
       const activitiesResponse = await apiService.getDashboardActivities();
-      if (activitiesResponse.success) {
-        setRecentActivities(activitiesResponse.data?.data || []);
+      if (activitiesResponse?.success && Array.isArray(activitiesResponse.data)) {
+        // newest first (defensive; service already sorts, but harmless)
+        const sorted = [...activitiesResponse.data].sort(
+          (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+        );
+        setRecentActivities(sorted as Activity[]);
+      } else {
+        setRecentActivities([]);
       }
 
+      // ----- Workload Alerts (already normalized by apiService) -----
       const alertsResponse = await apiService.getDashboardWorkload();
-      if (alertsResponse.success) {
-        setWorkloadAlerts(alertsResponse.data?.data || []);
+      if (alertsResponse?.success && Array.isArray(alertsResponse.data)) {
+        setWorkloadAlerts(alertsResponse.data as WorkloadAlert[]);
+      } else {
+        setWorkloadAlerts([]);
       }
 
       setLastUpdated(new Date());
@@ -158,7 +168,15 @@ const Dashboard = () => {
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div className="bg-white p-6 rounded-lg shadow-sm">
-          <h2 className="text-xl font-semibold mb-4">Recent Activities</h2>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-xl font-semibold">Recent Activities</h2>
+            <button
+              onClick={handleManualRefresh}
+              className="text-sm text-blue-600 hover:underline"
+            >
+              Refresh
+            </button>
+          </div>
 
           {loading ? (
             <p className="text-gray-500">Loading activities...</p>
@@ -233,48 +251,17 @@ const Dashboard = () => {
         </div>
       </div>
 
-      {/* Role-specific quick actions 
+      {/* Role-specific quick actions (kept commented in your original) */}
+      {/*
       {isSchoolHead && (
         <div className="bg-white p-6 rounded-lg shadow-sm">
           <h2 className="text-xl font-semibold mb-4">Quick Actions</h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
-              <h3 className="font-semibold text-blue-800 mb-2">
-                📊 View Reports
-              </h3>
-              <p className="text-sm text-blue-600 mb-3">
-                Access detailed scheduling reports and analytics
-              </p>
-              <button className="text-sm text-blue-700 hover:text-blue-800 font-medium">
-                View Reports →
-              </button>
-            </div>
-            <div className="bg-green-50 p-4 rounded-lg border border-green-200">
-              <h3 className="font-semibold text-green-800 mb-2">
-                📅 Manage Schedules
-              </h3>
-              <p className="text-sm text-green-600 mb-3">
-                Create and modify class schedules
-              </p>
-              <button className="text-sm text-green-700 hover:text-green-800 font-medium">
-                Manage Schedules →
-              </button>
-            </div>
-            <div className="bg-purple-50 p-4 rounded-lg border border-purple-200">
-              <h3 className="font-semibold text-purple-800 mb-2">
-                👥 Faculty Overview
-              </h3>
-              <p className="text-sm text-purple-600 mb-3">
-                Monitor faculty workload and assignments
-              </p>
-              <button className="text-sm text-purple-700 hover:text-purple-800 font-medium">
-                View Faculty →
-              </button>
-            </div>
+            ...
           </div>
         </div>
       )}
-       */}
+      */}
     </div>
   );
 };

@@ -10,22 +10,22 @@ const apiClient = axios.create({
 
 apiClient.interceptors.request.use(
   (config) => {
-    console.log(`🚀 API Request: ${config.method?.toUpperCase()} ${config.baseURL}${config.url}`);
+    console.log(`API Request: ${config.method?.toUpperCase()} ${config.baseURL}${config.url}`);
     return config;
   },
   (error) => {
-    console.error("❌ API Request Error:", error);
+    console.error("API Request Error:", error);
     return Promise.reject(error);
   }
 );
 
 apiClient.interceptors.response.use(
   (response) => {
-    console.log(`✅ API Response: ${response.status} ${response.config.url}`);
+    console.log(`API Response: ${response.status} ${response.config.url}`);
     return response;
   },
   (error) => {
-    console.error("❌ API Response Error:", error.response?.status, error.response?.data || error.message);
+    console.error("API Response Error:", error.response?.status, error.response?.data || error.message);
     return Promise.reject(error);
   }
 );
@@ -45,7 +45,7 @@ export interface SubjectDTO {
   name: string;
   description?: string;
   units?: number;
-  type?: string;          // Core, Applied, etc. (UI-friendly)
+  type?: string;         
   hoursPerWeek?: number;
   gradeLevel?: string | null; // '11' | '12' | null
   strand?: string | null;     // e.g., ICT, STEM, ...
@@ -164,6 +164,20 @@ export interface AutoGenResult {
   details?: any;
 }
 
+/** NEW: DTOs for dashboard endpoints */
+export interface ActivityDTO {
+  id: number;
+  description: string;
+  timestamp: string; // ISO-ish
+  type: string;      // professor | subject | schedule | room | section | other
+}
+
+export interface WorkloadAlertDTO {
+  professor_name: string;
+  subject_count: number;
+  alert_level: "high" | "max";
+}
+
 function coerceArray<T = any>(v: any): T[] {
   if (Array.isArray(v)) return v as T[];
   if (typeof v === "string") {
@@ -198,7 +212,25 @@ class ApiService {
       strand: row.strand ?? null,
       schedule_count: Number(row.schedule_count ?? 0),
     };
-    }
+  }
+
+  private mapActivityRow(r: any): ActivityDTO {
+    return {
+      id: Number(r.id ?? r.activity_id ?? 0),
+      description: String(r.description ?? r.activity_description ?? ""),
+      timestamp: String(r.timestamp ?? r.created_at ?? r.updated_at ?? ""),
+      type: String(r.type ?? r.entity ?? r.category ?? "other").toLowerCase(),
+    };
+  }
+
+  private mapWorkloadAlertRow(w: any): WorkloadAlertDTO {
+    const level = String(w.alert_level ?? w.level ?? "high").toLowerCase();
+    return {
+      professor_name: String(w.professor_name ?? w.name ?? ""),
+      subject_count: Number(w.subject_count ?? w.count ?? 0),
+      alert_level: level === "max" ? "max" : "high",
+    };
+  }
 
   async makeRequest<T>(
     method: "GET" | "POST" | "PUT" | "DELETE",
@@ -426,6 +458,7 @@ class ApiService {
     return this.makeRequest("POST", "/validate_time_slots.php", data);
   }
 
+  // --- School Heads ---------------------------------------------------------
 
   async getSchoolHeads(): Promise<ApiResponse> {
     return this.makeRequest("GET", "/school_head.php");
@@ -443,16 +476,40 @@ class ApiService {
     return this.makeRequest("DELETE", `/school_head.php?id=${id}`);
   }
 
-  async getDashboardActivities(): Promise<ApiResponse> {
-    return this.makeRequest("GET", "/dashboard_activities.php");
+  // --- Dashboard (normalized here!) ----------------------------------------
+
+  async getDashboardActivities(): Promise<ApiResponse<ActivityDTO[]>> {
+    const base = await this.makeRequest<any>("GET", "/dashboard_activities.php");
+
+    // Accept {success, data:[...]}, {success, data:{data:[...]}}, or just an array
+    const raw =
+      (Array.isArray(base.data?.data) && base.data.data) ||
+      (Array.isArray(base.data) && base.data) ||
+      [];
+
+    const mapped: ActivityDTO[] = raw.map((r: any) => this.mapActivityRow(r));
+
+    // newest first
+    mapped.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+    return { ...base, data: mapped };
   }
 
   async getDashboardMetrics(): Promise<ApiResponse> {
     return this.makeRequest("GET", "/dashboard_metrics.php");
   }
 
-  async getDashboardWorkload(): Promise<ApiResponse> {
-    return this.makeRequest("GET", "/dashboard_workload.php");
+  async getDashboardWorkload(): Promise<ApiResponse<WorkloadAlertDTO[]>> {
+    const base = await this.makeRequest<any>("GET", "/dashboard_workload.php");
+
+    const raw =
+      (Array.isArray(base.data?.data) && base.data.data) ||
+      (Array.isArray(base.data) && base.data) ||
+      [];
+
+    const mapped: WorkloadAlertDTO[] = raw.map((w: any) => this.mapWorkloadAlertRow(w));
+
+    return { ...base, data: mapped };
   }
 
   // --- Bulk upload / Sync / Optimizer --------------------------------------
