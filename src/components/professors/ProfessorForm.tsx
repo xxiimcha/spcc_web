@@ -310,7 +310,6 @@ const ProfessorForm = ({
   const toggleSubject = (id: number, checked: boolean) => {
     const nId = Number(id);
     if (checked) {
-      // Add only if we still have room
       if (selectedSubjectIds.includes(nId)) return;
       if (selectedSubjectIds.length >= MAX_SUBJECTS) return; // UI should disable, but guard too
       const next = [...selectedSubjectIds, nId];

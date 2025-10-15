@@ -7,8 +7,6 @@ import {
   Trash2,
   Users,
   MapPin,
-  ChevronDown,
-  ChevronRight,
   Pencil,
   UserPlus,
   AlertTriangle,
@@ -80,11 +78,6 @@ interface Room {
   }[];
 }
 
-interface FloorGroup {
-  floor: number;
-  rooms: Room[];
-}
-
 interface Section {
   section_id: number;
   section_name: string;
@@ -99,6 +92,8 @@ interface RoomSectionDialogProps {
   roomNumber: number;
   onSectionAdded: () => void;
 }
+
+/* ---------- Add section dialog ---------- */
 
 const RoomSectionDialog: React.FC<RoomSectionDialogProps> = ({
   open,
@@ -261,13 +256,13 @@ const RoomManagement = () => {
   const [selectedRoom, setSelectedRoom] = useState<Room | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [roomToDelete, setRoomToDelete] = useState<number | null>(null);
-  const [expandedFloors, setExpandedFloors] = useState<Set<number>>(new Set());
+
   const [selectedFloor, setSelectedFloor] = useState<string>("all");
   const [sectionDialogOpen, setSectionDialogOpen] = useState(false);
   const [selectedRoomForSection, setSelectedRoomForSection] = useState<Room | null>(null);
   const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
 
-  // New UI states
+  // UI states
   const [viewMode, setViewMode] = useState<ViewMode>("grid");
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("number");
@@ -316,18 +311,7 @@ const RoomManagement = () => {
     });
   };
 
-  const groupRoomsByFloor = (all: Room[]): FloorGroup[] => {
-    const map: Record<number, Room[]> = {};
-    all.forEach((r) => {
-      const floor = Math.floor(r.number / 100);
-      map[floor] = map[floor] || [];
-      map[floor].push(r);
-    });
-    return Object.entries(map)
-      .map(([floor, rs]) => ({ floor: Number(floor), rooms: sortRooms(rs) }))
-      .sort((a, b) => a.floor - b.floor);
-  };
-
+  // Keep floor filter available (derived from room number), but no grouping
   const getUniqueFloors = (all: Room[]): number[] =>
     Array.from(new Set(all.map((r) => Math.floor(r.number / 100)))).sort((a, b) => a - b);
 
@@ -353,8 +337,6 @@ const RoomManagement = () => {
     return sortRooms(bySearch);
   }, [rooms, selectedFloor, search, sortKey, sortDir]);
 
-  const grouped = useMemo(() => groupRoomsByFloor(filtered), [filtered]);
-
   const formatOrdinal = (n: number) => {
     const j = n % 10,
       k = n % 100;
@@ -363,13 +345,6 @@ const RoomManagement = () => {
     if (j === 3 && k !== 13) return `${n}rd`;
     return `${n}th`;
   };
-
-  const toggleFloor = (f: number) =>
-    setExpandedFloors((prev) => {
-      const s = new Set(prev);
-      s.has(f) ? s.delete(f) : s.add(f);
-      return s;
-    });
 
   const handleRoomCreated = () => {
     setIsFormOpen(false);
@@ -428,8 +403,6 @@ const RoomManagement = () => {
       });
       return;
     }
-
-    // NEW: block if the room already has a section
     if (room.sections && room.sections.length > 0) {
       toast({
         title: "Already assigned",
@@ -437,7 +410,6 @@ const RoomManagement = () => {
       });
       return;
     }
-
     setSelectedRoomForSection(room);
     setSectionDialogOpen(true);
   };
@@ -474,7 +446,6 @@ const RoomManagement = () => {
 
   return (
     <div className="max-w-screen-2xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
-
       {/* Sticky Toolbar */}
       <div className="sticky top-0 z-30 bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-b">
         <div className="py-3 space-y-3 md:space-y-0 md:flex md:items-center md:justify-between">
@@ -492,7 +463,6 @@ const RoomManagement = () => {
           {/* Controls */}
           <div className="min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              {/* Search takes the available width first */}
               <div className="flex-1 min-w-[190px] sm:min-w-[260px]">
                 <Input
                   value={search}
@@ -503,7 +473,7 @@ const RoomManagement = () => {
                 />
               </div>
 
-              {/* Filters */}
+              {/* Floor filter (optional) */}
               <div className="w-[140px] sm:w-[150px]">
                 <Select value={selectedFloor} onValueChange={setSelectedFloor}>
                   <SelectTrigger className="w-full" aria-label="Floor filter">
@@ -533,7 +503,6 @@ const RoomManagement = () => {
                 </Select>
               </div>
 
-              {/* Full actions on ≥ sm */}
               <div className="hidden sm:flex items-center gap-2">
                 <Button
                   variant="outline"
@@ -574,11 +543,10 @@ const RoomManagement = () => {
                 </Button>
               </div>
 
-              {/* Compact “More” menu on mobile */}
+              {/* Mobile: compact menu */}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button className="sm:hidden" variant="default" size="icon" aria-label="More actions">
-                    {/* three dots / hamburger works too */}
                     <MoreVertical className="h-4 w-4" />
                   </Button>
                 </DropdownMenuTrigger>
@@ -623,7 +591,7 @@ const RoomManagement = () => {
         <StatCard label="Total Capacity" value={stats.capacity.toLocaleString()} />
       </div>
 
-      {/* Body */}
+      {/* Body (flat list / grid, NO per-floor grouping) */}
       <div className="mt-6">
         {loading ? (
           <SkeletonList />
@@ -653,95 +621,32 @@ const RoomManagement = () => {
               </Button>
             </CardFooter>
           </Card>
+        ) : viewMode === "grid" ? (
+          <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
+            {filtered.map((room) => (
+              <RoomCard
+                key={room.id}
+                room={room}
+                getRoomTypeBadge={getRoomTypeBadge}
+                openViewDialog={openViewDialog}
+                handleEditRoom={handleEditRoom}
+                confirmDelete={confirmDelete}
+                handleAddSection={handleAddSection}
+              />
+            ))}
+          </div>
         ) : (
-          <div className="space-y-6">
-            {grouped.map((grp) => (
-              <Card key={grp.floor} className="border rounded-xl">
-                {/* sticky header with higher z and solid bg */}
-                <CardHeader
-                  className="
-                    sticky top-[56px] sm:top-[68px]
-                    z-30
-                    bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60
-                    border-b py-3
-                  "
-                >
-                  <button
-                    className="w-full flex items-center justify-between text-left"
-                    onClick={() => toggleFloor(grp.floor)}
-                  >
-                    <div className="flex items-center gap-3">
-                      {expandedFloors.has(grp.floor) ? (
-                        <ChevronDown className="h-5 w-5 text-primary" />
-                      ) : (
-                        <ChevronRight className="h-5 w-5 text-primary" />
-                      )}
-                      <div>
-                        <CardTitle className="text-base sm:text-lg">{formatOrdinal(grp.floor)} Floor</CardTitle>
-                        <CardDescription className="text-xs">
-                          {grp.rooms.length} {grp.rooms.length === 1 ? "Room" : "Rooms"}
-                        </CardDescription>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <Badge variant="outline">{grp.rooms.length}</Badge>
-                      <div className="flex rounded-md border overflow-hidden">
-                        <Button
-                          variant={viewMode === "grid" ? "default" : "ghost"}
-                          className="h-8 rounded-none"
-                          onClick={(e) => { e.stopPropagation(); setViewMode("grid"); }}
-                          aria-label="Grid view"
-                        >
-                          <LayoutGrid className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant={viewMode === "list" ? "default" : "ghost"}
-                          className="h-8 rounded-none"
-                          onClick={(e) => { e.stopPropagation(); setViewMode("list"); }}
-                          aria-label="List view"
-                        >
-                          <List className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
-                  </button>
-                </CardHeader>
-
-                {expandedFloors.has(grp.floor) && (
-                  <CardContent className="pt-5">
-                    {viewMode === "grid" ? (
-                      <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
-                        {grp.rooms.map((room) => (
-                          <RoomCard
-                            key={room.id}
-                            room={room}
-                            getRoomTypeBadge={getRoomTypeBadge}
-                            openViewDialog={openViewDialog}
-                            handleEditRoom={handleEditRoom}
-                            confirmDelete={confirmDelete}
-                            handleAddSection={handleAddSection}
-                          />
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="divide-y rounded-md border">
-                        {grp.rooms.map((room) => (
-                          <RoomRow
-                            key={room.id}
-                            room={room}
-                            getRoomTypeBadge={getRoomTypeBadge}
-                            openViewDialog={openViewDialog}
-                            handleEditRoom={handleEditRoom}
-                            confirmDelete={confirmDelete}
-                            handleAddSection={handleAddSection}
-                          />
-                        ))}
-                      </div>
-                    )}
-                  </CardContent>
-                )}
-              </Card>
+          <div className="divide-y rounded-md border">
+            {filtered.map((room) => (
+              <RoomRow
+                key={room.id}
+                room={room}
+                getRoomTypeBadge={getRoomTypeBadge}
+                openViewDialog={openViewDialog}
+                handleEditRoom={handleEditRoom}
+                confirmDelete={confirmDelete}
+                handleAddSection={handleAddSection}
+              />
             ))}
           </div>
         )}
@@ -820,6 +725,7 @@ const RoomManagement = () => {
   );
 };
 
+/* ---------- Small components ---------- */
 
 const StatCard = ({ label, value }: { label: string; value: string | number }) => (
   <Card className="shadow-none">
@@ -970,7 +876,6 @@ const RoomRow = ({
         </div>
       </div>
 
-      {/* Actions: wrap and full width on mobile */}
       <div className="flex flex-wrap gap-2 w-full sm:w-auto">
         <Button variant="outline" size="sm" className="flex-1 sm:flex-none" onClick={() => openViewDialog(room)}>
           <Eye className="mr-2 h-4 w-4" /> View
@@ -979,7 +884,6 @@ const RoomRow = ({
           <Pencil className="mr-2 h-4 w-4" /> Edit
         </Button>
 
-        {/* NEW: only show Add Section when not lab AND no sections yet */}
         {room.type?.toLowerCase() !== "laboratory" && (!room.sections || room.sections.length === 0) ? (
           <Button
             variant="outline"
@@ -1000,7 +904,6 @@ const RoomRow = ({
           <Trash2 className="mr-2 h-4 w-4" /> Delete
         </Button>
       </div>
-
     </div>
   );
 };
@@ -1035,6 +938,5 @@ const SkeletonList = () => (
     ))}
   </div>
 );
-
 
 export default RoomManagement;
