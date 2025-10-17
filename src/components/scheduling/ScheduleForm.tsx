@@ -1081,10 +1081,6 @@ const ScheduleForm: React.FC<ScheduleFormProps> = ({ onSubmit, onCancel, title =
                                       </Button>
                                     ))}
                                   </div>
-                                  <p className="mt-2 text-emerald-800">
-                                    Working hours: {SCHOOL_START} – {SCHOOL_END}
-                                    {isOnsite && <span className="ml-2">• Lunch break (no onsite classes): {LUNCH_START}–{LUNCH_END}</span>}
-                                  </p>
                                 </div>
                               </div>
                             </div>
