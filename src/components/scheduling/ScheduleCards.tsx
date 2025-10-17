@@ -15,6 +15,16 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { toast } from "@/components/ui/use-toast";
 import { apiService } from "@/services/apiService";
 import {
@@ -54,7 +64,7 @@ export interface ScheduleCardsProps {
   schedules: Schedule[];
   onScheduleClick?: (schedule: Schedule) => void;
   onDeleted?: (sectionName: string, removedIds: string[]) => void;
-  onDeleteSection?: (sectionName: string, items: Schedule[]) => void; // kept for backward-compat (unused here)
+  onDeleteSection?: (sectionName: string, items: Schedule[]) => void; // kept for compat; unused
   cols?: 1 | 2 | 3 | 4;
   calendarMode?: "dialog" | "side";
 }
@@ -167,7 +177,7 @@ const toWeekEvents = (group: SectionGroup): WeekCalEvent[] => {
   return events;
 };
 
-// For organized list view: day ordering and sorting helpers
+// Helpers for list view
 const DAY_ORDER: Record<string, number> = {
   monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6, sunday: 7,
 };
@@ -184,7 +194,6 @@ const sortByDayThenTime = (a: Schedule, b: Schedule) => {
   if (ta !== tb) return ta - tb;
   return (a.subj_code || "").localeCompare(b.subj_code || "");
 };
-
 const daysLabel = (days: string[]) =>
   (days || []).map(d => (d?.[0]?.toUpperCase() || "") + d.slice(1,3).toLowerCase()).join(", ");
 
@@ -218,7 +227,7 @@ export const ScheduleCards: React.FC<ScheduleCardsProps> = ({
   schedules,
   onScheduleClick,
   onDeleted,
-  onDeleteSection, // not used here anymore
+  onDeleteSection, // not used here
   cols = 3,
   calendarMode = "dialog",
 }) => {
@@ -226,11 +235,18 @@ export const ScheduleCards: React.FC<ScheduleCardsProps> = ({
   const [selected, setSelected] = React.useState<SectionGroup | null>(null);
   const [open, setOpen] = React.useState(false);
 
-  // NEW: List view dialog state
+  // List view dialog state
   const [listOpen, setListOpen] = React.useState(false);
   const [listSection, setListSection] = React.useState<SectionGroup | null>(null);
 
+  // Selection for bulk delete in list dialog
+  const [selectedIds, setSelectedIds] = React.useState<Record<string, boolean>>({});
+  const [listBusy, setListBusy] = React.useState(false);
+
+  // Per-item busy & confirm (both card and list)
   const [itemBusy, setItemBusy] = React.useState<Record<string, boolean>>({});
+  const [confirmSingleOpen, setConfirmSingleOpen] = React.useState(false);
+  const [toDeleteSingle, setToDeleteSingle] = React.useState<Schedule | null>(null);
 
   const openCalendarFor = (g: SectionGroup) => {
     if (calendarMode === "dialog") {
@@ -242,19 +258,24 @@ export const ScheduleCards: React.FC<ScheduleCardsProps> = ({
   };
 
   const openListFor = (g: SectionGroup) => {
-    setListSection({
-      ...g,
-      items: [...g.items].sort(sortByDayThenTime),
-    });
+    const sorted = [...g.items].sort(sortByDayThenTime);
+    setListSection({ ...g, items: sorted });
+    setSelectedIds({});
     setListOpen(true);
   };
 
-  const deleteSingle = async (sched: Schedule) => {
-    const idNum = Number(String(sched.schedule_id));
-    if (!Number.isFinite(idNum)) return;
+  const promptDeleteSingle = (sched: Schedule) => {
+    setToDeleteSingle(sched);
+    setConfirmSingleOpen(true);
+  };
 
-    const key = String(sched.schedule_id);
-    setItemBusy((m) => ({ ...m, [key]: true }));
+  const performDeleteSingle = async () => {
+    if (!toDeleteSingle) return;
+    const sched = toDeleteSingle;
+    const idKey = String(sched.schedule_id);
+    const idNum = Number(idKey);
+    setItemBusy((m) => ({ ...m, [idKey]: true }));
+
     try {
       const r = await apiService.deleteSchedule(idNum);
       if (!r?.success) throw new Error(r?.message || "Delete failed");
@@ -264,15 +285,20 @@ export const ScheduleCards: React.FC<ScheduleCardsProps> = ({
         description: `Removed ${displayFor(sched).subjCode || "schedule"} from ${sched.section_name}.`,
       });
 
-      onDeleted?.(sched.section_name, [key]);
+      // propagate to parent
+      onDeleted?.(sched.section_name, [idKey]);
 
-      // also reflect in list dialog immediately
+      // if list open & same section, remove locally
       if (listSection?.key === sched.section_name.trim()) {
         setListSection((prev) =>
-          prev ? { ...prev, items: prev.items.filter(i => String(i.schedule_id) !== key) } : prev
+          prev ? { ...prev, items: prev.items.filter(i => String(i.schedule_id) !== idKey) } : prev
         );
+        setSelectedIds((prev) => {
+          const next = { ...prev };
+          delete next[idKey];
+          return next;
+        });
       }
-
     } catch (e: any) {
       toast({
         title: "Error",
@@ -280,9 +306,99 @@ export const ScheduleCards: React.FC<ScheduleCardsProps> = ({
         variant: "destructive",
       });
     } finally {
-      setItemBusy((m) => ({ ...m, [key]: false }));
+      setItemBusy((m) => ({ ...m, [idKey]: false }));
+      setConfirmSingleOpen(false);
+      setToDeleteSingle(null);
     }
   };
+
+  // Bulk selection helpers
+  const listIds = React.useMemo(
+    () => (listSection ? listSection.items.map(i => String(i.schedule_id)) : []),
+    [listSection]
+  );
+  const allChecked = listIds.length > 0 && listIds.every(id => selectedIds[id]);
+  const someChecked = listIds.some(id => selectedIds[id]) && !allChecked;
+  const selectedIdList = listIds.filter(id => selectedIds[id]);
+
+  const toggleAll = () => {
+    if (!listSection) return;
+    const next: Record<string, boolean> = {};
+    const check = !allChecked;
+    for (const id of listIds) next[id] = check;
+    setSelectedIds(next);
+  };
+
+  const toggleOne = (id: string) => {
+    setSelectedIds((p) => ({ ...p, [id]: !p[id] }));
+  };
+
+  const bulkDeleteSelected = async () => {
+  if (!listSection || selectedIdList.length === 0) return;
+
+  const ok = window.confirm(
+    `Delete ${selectedIdList.length} selected schedule${selectedIdList.length > 1 ? "s" : ""} from ${listSection.name}? This cannot be undone.`
+  );
+  if (!ok) return;
+
+  setListBusy(true);
+
+  const numericIds = selectedIdList
+    .map((id) => Number(id))
+    .filter((n) => Number.isFinite(n) && n > 0);
+
+  let removedIds: string[] = [];
+
+  try {
+    // Try BULK first
+    const bulk = await apiService.deleteSchedulesBulk(numericIds);
+
+    if (bulk?.success) {
+      // use deleted_ids when provided; otherwise assume all requested were deleted
+      const fromServer = (bulk.data as any)?.deleted_ids as number[] | undefined;
+      removedIds = (fromServer ?? numericIds).map(String);
+    } else {
+      // Fallback: sequential delete WITHOUT per-item sync; then one sync at the end
+      await Promise.all(
+        numericIds.map((id) => apiService.makeRequest("DELETE", `/schedule.php?id=${id}`))
+      );
+      await apiService.syncToFirebase();
+      removedIds = numericIds.map(String);
+    }
+
+    // Update local dialog list
+    setListSection((prev) =>
+      prev
+        ? { ...prev, items: prev.items.filter((i) => !removedIds.includes(String(i.schedule_id))) }
+        : prev
+    );
+    setSelectedIds({});
+
+    toast({
+      title: "Deleted",
+      description: `Removed ${removedIds.length} schedule${removedIds.length > 1 ? "s" : ""} from ${listSection.name}.`,
+    });
+
+    // Notify parent page
+    onDeleted?.(listSection.name, removedIds);
+
+    // Close the dialog and refresh the page to ensure everything is in sync
+    setListOpen(false);
+    // small delay lets the toast render before reload (optional)
+    setTimeout(() => {
+      window.location.reload();
+    }, 250);
+  } catch (e: any) {
+    toast({
+      title: "Error",
+      description: e?.message || "Bulk delete failed.",
+      variant: "destructive",
+    });
+  } finally {
+    setListBusy(false);
+  }
+  };
+
 
   return (
     <div className={`w-full ${calendarMode === "side" ? "grid grid-cols-1 lg:grid-cols-[1fr_420px] gap-4" : ""}`}>
@@ -328,10 +444,11 @@ export const ScheduleCards: React.FC<ScheduleCardsProps> = ({
                         className={`relative rounded-lg border p-2 pr-9 before:absolute before:left-0 before:top-0 before:h-full before:w-1 ${stripe}`}
                         onClick={(e) => { e.stopPropagation(); openCalendarFor(g); }}
                       >
+                        {/* Per-item delete button (with confirm) */}
                         <button
                           className="absolute right-2 top-2 rounded-md p-1 hover:bg-red-50 text-red-600"
                           title="Delete this schedule"
-                          onClick={(e) => { e.stopPropagation(); deleteSingle(s); }}
+                          onClick={(e) => { e.stopPropagation(); promptDeleteSingle(s); }}
                           disabled={busyThis}
                         >
                           <Trash2 className={`h-4 w-4 ${busyThis ? "opacity-50" : ""}`} />
@@ -437,7 +554,7 @@ export const ScheduleCards: React.FC<ScheduleCardsProps> = ({
         </Dialog>
       )}
 
-      {/* LIST VIEW DIALOG */}
+      {/* LIST VIEW DIALOG (with bulk delete) */}
       <Dialog open={listOpen} onOpenChange={setListOpen}>
         <DialogContent className="w-[98vw] sm:w-auto sm:max-w-[1100px] p-0">
           <div className="flex flex-col max-h-[85vh]">
@@ -449,19 +566,40 @@ export const ScheduleCards: React.FC<ScheduleCardsProps> = ({
             </DialogHeader>
 
             <div className="px-4 pb-4 overflow-auto">
-              {/* Header meta */}
               {listSection && (
-                <div className="mb-3 text-xs text-muted-foreground">
-                  Grade {listSection.level ?? "—"} • {listSection.strand ?? "—"} • {listSection.items.length} item{listSection.items.length !== 1 ? "s" : ""}
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <div className="text-xs text-muted-foreground">
+                    Grade {listSection.level ?? "—"} • {listSection.strand ?? "—"} • {listSection.items.length} item{listSection.items.length !== 1 ? "s" : ""}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      onClick={bulkDeleteSelected}
+                      disabled={listBusy || selectedIdList.length === 0}
+                    >
+                      {listBusy ? "Deleting..." : `Delete selected (${selectedIdList.length})`}
+                    </Button>
+                  </div>
                 </div>
               )}
 
-              {/* Responsive table */}
               <div className="rounded-lg border overflow-hidden">
                 <div className="w-full overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead className="bg-muted/40">
                       <tr className="[&>th]:px-3 [&>th]:py-2 text-left">
+                        <th className="w-10">
+                          <input
+                            type="checkbox"
+                            aria-label="Select all"
+                            checked={allChecked}
+                            ref={(el) => {
+                              if (el) el.indeterminate = someChecked;
+                            }}
+                            onChange={toggleAll}
+                          />
+                        </th>
                         <th>Subject</th>
                         <th>Time</th>
                         <th>Days</th>
@@ -475,9 +613,18 @@ export const ScheduleCards: React.FC<ScheduleCardsProps> = ({
                     <tbody>
                       {listSection?.items.map((s) => {
                         const d = displayFor(s);
-                        const busyThis = itemBusy[String(s.schedule_id)] === true;
+                        const key = String(s.schedule_id);
+                        const busyThis = itemBusy[key] === true;
                         return (
-                          <tr key={s.schedule_id} className="border-t align-top">
+                          <tr key={key} className="border-t align-top">
+                            <td className="px-3 py-2">
+                              <input
+                                type="checkbox"
+                                checked={!!selectedIds[key]}
+                                onChange={() => toggleOne(key)}
+                                aria-label={`Select ${d.subjCode || s.schedule_type}`}
+                              />
+                            </td>
                             <td className="px-3 py-2">
                               <div className="font-medium">{d.subjCode || s.schedule_type}</div>
                               <div className="text-xs text-muted-foreground">{d.subjName}</div>
@@ -496,7 +643,7 @@ export const ScheduleCards: React.FC<ScheduleCardsProps> = ({
                                   size="sm"
                                   variant="ghost"
                                   className="h-8 px-2 text-red-600 hover:bg-red-50"
-                                  onClick={() => deleteSingle(s)}
+                                  onClick={() => promptDeleteSingle(s)}
                                   disabled={busyThis}
                                   title="Delete"
                                 >
@@ -509,7 +656,7 @@ export const ScheduleCards: React.FC<ScheduleCardsProps> = ({
                       })}
                       {(!listSection || listSection.items.length === 0) && (
                         <tr>
-                          <td colSpan={8} className="px-3 py-6 text-center text-sm text-muted-foreground">
+                          <td colSpan={9} className="px-3 py-6 text-center text-sm text-muted-foreground">
                             No schedules to show.
                           </td>
                         </tr>
@@ -522,6 +669,27 @@ export const ScheduleCards: React.FC<ScheduleCardsProps> = ({
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Confirm SINGLE deletion (used by both card + list item) */}
+      <AlertDialog open={confirmSingleOpen} onOpenChange={setConfirmSingleOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this schedule?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-red-600 hover:bg-red-700"
+              onClick={performDeleteSingle}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };

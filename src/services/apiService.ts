@@ -52,6 +52,8 @@ export interface SubjectDTO {
   schedule_count?: number;
 }
 
+type BulkDeleteResult = { deleted_ids?: number[]; message?: string };
+
 /** Payload you can send to backend (accepts both camel & snake). */
 export type SubjectPayload = {
   // backend snake_case (any optional; backend accepts partial on PUT)
@@ -416,7 +418,35 @@ class ApiService {
     }
     return result;
   }
+  
+  async deleteSchedulesBulk(ids: number[]): Promise<ApiResponse<BulkDeleteResult>> {
+    const result = await this.makeRequest<BulkDeleteResult>(
+      "DELETE",
+      "/schedule.php",
+      { ids }
+    );
+    if (result.success) {
+      try { await this.syncToFirebase(); } catch (e) { console.warn("Failed to sync to Firebase after bulk delete:", e); }
+    }
+    return result;
+  }
 
+  async deleteSchedulesBySection(payload: {
+    section_id?: number;
+    section_name?: string;
+    school_year?: string;
+    semester?: string;
+  }): Promise<ApiResponse<BulkDeleteResult>> {
+    const result = await this.makeRequest<BulkDeleteResult>(
+      "DELETE",
+      "/schedule.php",
+      payload
+    );
+    if (result.success) {
+      try { await this.syncToFirebase(); } catch (e) { console.warn("Failed to sync to Firebase after section bulk delete:", e); }
+    }
+    return result;
+  }
 
   async updateScheduleProfessor(scheduleId: number | string, professorId: number | string): Promise<ApiResponse> {
     const id = /^\d+$/.test(String(scheduleId)) ? Number(scheduleId) : scheduleId;
