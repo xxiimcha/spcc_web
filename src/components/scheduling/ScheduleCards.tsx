@@ -15,7 +15,26 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { BookOpen, Calendar as CalendarIcon, Clock, MapPin, MoreVertical, Users } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { toast } from "@/components/ui/use-toast";
+import { apiService } from "@/services/apiService";
+import {
+  BookOpen,
+  Calendar as CalendarIcon,
+  Clock,
+  MapPin,
+  MoreVertical,
+  Users,
+} from "lucide-react";
 import { WeekCalendar, WeekCalEvent } from "@/components/scheduling/WeekCalendar";
 
 /** Keep in sync with page's Schedule type */
@@ -43,7 +62,13 @@ export interface Schedule {
 export interface ScheduleCardsProps {
   schedules: Schedule[];
   onScheduleClick?: (schedule: Schedule) => void;
+
+  /** Optional: page can refresh or patch state after deletion */
+  onDeleted?: (sectionName: string, removedIds: string[]) => void;
+
+  /** @deprecated Kept for compatibility; no longer needed if onDeleted is used */
   onDeleteSection?: (sectionName: string, items: Schedule[]) => void;
+
   cols?: 1 | 2 | 3 | 4;
   calendarMode?: "dialog" | "side";
 }
@@ -166,8 +191,9 @@ const toWeekEvents = (group: SectionGroup): WeekCalEvent[] => {
 
 const SectionActionsMenu: React.FC<{
   section: SectionGroup;
-  onDeleteSection?: (name: string, items: Schedule[]) => void;
-}> = ({ section, onDeleteSection }) => (
+  // instead of directly deleting, we ask parent component to open confirm
+  onAskDelete: (section: SectionGroup) => void;
+}> = ({ section, onAskDelete }) => (
   <DropdownMenu>
     <DropdownMenuTrigger asChild>
       <Button size="icon" variant="ghost" className="h-8 w-8">
@@ -179,7 +205,10 @@ const SectionActionsMenu: React.FC<{
       <DropdownMenuSeparator />
       <DropdownMenuItem
         className="text-red-600 focus:text-red-600"
-        onClick={() => onDeleteSection?.(section.name, section.items)}
+        onClick={(e) => {
+          e.stopPropagation();
+          onAskDelete(section);
+        }}
       >
         Delete Section Schedules
       </DropdownMenuItem>
@@ -192,13 +221,75 @@ const SectionActionsMenu: React.FC<{
 export const ScheduleCards: React.FC<ScheduleCardsProps> = ({
   schedules,
   onScheduleClick,
-  onDeleteSection,
+  onDeleted,            // <<< notify page when done
+  onDeleteSection,      // <<< legacy; still supported
   cols = 3,
   calendarMode = "dialog",
 }) => {
   const groups = useSectionGroups(schedules);
   const [selected, setSelected] = React.useState<SectionGroup | null>(null);
   const [open, setOpen] = React.useState(false);
+
+  // >>> Deletion wiring
+  const [confirmOpen, setConfirmOpen] = React.useState(false);
+  const [sectionToDelete, setSectionToDelete] = React.useState<SectionGroup | null>(null);
+  const [busy, setBusy] = React.useState(false);
+
+  const askDelete = (g: SectionGroup) => {
+    setSectionToDelete(g);
+    setConfirmOpen(true);
+  };
+
+  const performDelete = async () => {
+    if (!sectionToDelete) return;
+
+    // 1) Prepare both numeric and string id arrays
+    const numericIds = sectionToDelete.items
+      .map(i => Number(String(i.schedule_id)))
+      .filter(n => Number.isFinite(n) && n > 0);
+
+    if (numericIds.length === 0) return;
+
+    const stringIds = numericIds.map(String); // for callbacks typed as string[]
+
+    setBusy(true);
+    try {
+      // 2) Use bulk if available
+      if (typeof (apiService as any).deleteSchedulesBulk === "function") {
+        const res = await (apiService as any).deleteSchedulesBulk(numericIds);
+        if (!res?.success) throw new Error(res?.message || "Bulk delete failed");
+      } else {
+        // 3) Fallback: sequential deletion
+        for (const id of numericIds) {
+          const r = await apiService.deleteSchedule(id as any);
+          if (!r?.success) throw new Error(r?.message || "Delete failed");
+        }
+      }
+
+      toast({
+        title: "Deleted",
+        description: `Removed ${numericIds.length} schedule${numericIds.length > 1 ? "s" : ""} from ${sectionToDelete.name}.`,
+      });
+
+      // 4) Notify parent (string[] as per the prop type)
+      onDeleted?.(sectionToDelete.name, stringIds);
+      // legacy callback still supported
+      onDeleteSection?.(sectionToDelete.name, sectionToDelete.items);
+
+      setConfirmOpen(false);
+      setSectionToDelete(null);
+    } catch (e: any) {
+      toast({
+        title: "Error",
+        description: e?.message || "Failed to delete schedules.",
+        variant: "destructive",
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // <<< Deletion wiring
 
   const openCalendarFor = (g: SectionGroup) => {
     if (calendarMode === "dialog") {
@@ -225,7 +316,7 @@ export const ScheduleCards: React.FC<ScheduleCardsProps> = ({
                 className="relative overflow-hidden rounded-xl border bg-white hover:shadow-md transition-shadow cursor-pointer"
               >
                 <div className="absolute top-2 right-2 z-10">
-                  <SectionActionsMenu section={g} onDeleteSection={onDeleteSection} />
+                  <SectionActionsMenu section={g} onAskDelete={askDelete} />
                 </div>
 
                 {/* Header */}
@@ -351,6 +442,31 @@ export const ScheduleCards: React.FC<ScheduleCardsProps> = ({
           </DialogContent>
         </Dialog>
       )}
+
+      {/* Confirm deletion dialog */}
+      <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete all schedules for this section?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete{" "}
+              <strong>{sectionToDelete?.items.length ?? 0}</strong> schedule
+              {sectionToDelete && sectionToDelete.items.length !== 1 ? "s" : ""} in{" "}
+              <em>{sectionToDelete?.name}</em>. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-red-600 hover:bg-red-700"
+              onClick={performDelete}
+              disabled={busy}
+            >
+              {busy ? "Deleting..." : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };

@@ -417,6 +417,7 @@ class ApiService {
     return result;
   }
 
+
   async updateScheduleProfessor(scheduleId: number | string, professorId: number | string): Promise<ApiResponse> {
     const id = /^\d+$/.test(String(scheduleId)) ? Number(scheduleId) : scheduleId;
     return this.makeRequest("PUT", `/schedule.php?id=${id}`, {
