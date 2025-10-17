@@ -15,16 +15,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { toast } from "@/components/ui/use-toast";
 import { apiService } from "@/services/apiService";
 import {
@@ -34,10 +24,11 @@ import {
   MapPin,
   MoreVertical,
   Users,
+  Trash2,
+  List as ListIcon,
 } from "lucide-react";
 import { WeekCalendar, WeekCalEvent } from "@/components/scheduling/WeekCalendar";
 
-/** Keep in sync with page's Schedule type */
 export type Origin = "auto" | "manual";
 export interface Schedule {
   schedule_id: string;
@@ -47,9 +38,9 @@ export interface Schedule {
   subj_name: string;
   professor_name: string;
   section_name: string;
-  schedule_type: string; // "Onsite", "Homeroom", "Recess", etc.
-  start_time: string;     // "HH:MM" or "HH:MM:SS"
-  end_time: string;       // "HH:MM" or "HH:MM:SS"
+  schedule_type: string;
+  start_time: string;
+  end_time: string;
   days: string[];
   room_number: string | null;
   room_type: string | null;
@@ -62,18 +53,11 @@ export interface Schedule {
 export interface ScheduleCardsProps {
   schedules: Schedule[];
   onScheduleClick?: (schedule: Schedule) => void;
-
-  /** Optional: page can refresh or patch state after deletion */
   onDeleted?: (sectionName: string, removedIds: string[]) => void;
-
-  /** @deprecated Kept for compatibility; no longer needed if onDeleted is used */
-  onDeleteSection?: (sectionName: string, items: Schedule[]) => void;
-
+  onDeleteSection?: (sectionName: string, items: Schedule[]) => void; // kept for backward-compat (unused here)
   cols?: 1 | 2 | 3 | 4;
   calendarMode?: "dialog" | "side";
 }
-
-/* ----------------- Helpers ----------------- */
 
 const formatTimeAMPM = (time: string) => {
   if (!time) return "";
@@ -132,8 +116,6 @@ const gridCols = (cols?: number) => {
   }
 };
 
-/* ----------------- Grouping ----------------- */
-
 type SectionGroup = {
   key: string;
   name: string;
@@ -162,8 +144,6 @@ const useSectionGroups = (schedules: Schedule[]) => {
   }, [schedules]);
 };
 
-/* ----------------- Convert to WeekCalendar events ----------------- */
-
 const toWeekEvents = (group: SectionGroup): WeekCalEvent[] => {
   const events: WeekCalEvent[] = [];
   group.items.forEach((s) => {
@@ -187,13 +167,31 @@ const toWeekEvents = (group: SectionGroup): WeekCalEvent[] => {
   return events;
 };
 
-/* ----------------- Section actions ----------------- */
+// For organized list view: day ordering and sorting helpers
+const DAY_ORDER: Record<string, number> = {
+  monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6, sunday: 7,
+};
+const firstDayKey = (days: string[]) => {
+  const k = (days?.[0] || "").toLowerCase();
+  return DAY_ORDER[k] || 999;
+};
+const sortByDayThenTime = (a: Schedule, b: Schedule) => {
+  const da = firstDayKey(a.days);
+  const db = firstDayKey(b.days);
+  if (da !== db) return da - db;
+  const ta = toMinutesAny(a.start_time);
+  const tb = toMinutesAny(b.start_time);
+  if (ta !== tb) return ta - tb;
+  return (a.subj_code || "").localeCompare(b.subj_code || "");
+};
+
+const daysLabel = (days: string[]) =>
+  (days || []).map(d => (d?.[0]?.toUpperCase() || "") + d.slice(1,3).toLowerCase()).join(", ");
 
 const SectionActionsMenu: React.FC<{
   section: SectionGroup;
-  // instead of directly deleting, we ask parent component to open confirm
-  onAskDelete: (section: SectionGroup) => void;
-}> = ({ section, onAskDelete }) => (
+  onViewList: (section: SectionGroup) => void;
+}> = ({ section, onViewList }) => (
   <DropdownMenu>
     <DropdownMenuTrigger asChild>
       <Button size="icon" variant="ghost" className="h-8 w-8">
@@ -204,25 +202,23 @@ const SectionActionsMenu: React.FC<{
       <DropdownMenuLabel>Actions</DropdownMenuLabel>
       <DropdownMenuSeparator />
       <DropdownMenuItem
-        className="text-red-600 focus:text-red-600"
         onClick={(e) => {
           e.stopPropagation();
-          onAskDelete(section);
+          onViewList(section);
         }}
       >
-        Delete Section Schedules
+        <ListIcon className="h-4 w-4 mr-2" />
+        View schedules
       </DropdownMenuItem>
     </DropdownMenuContent>
   </DropdownMenu>
 );
 
-/* ----------------- Main ----------------- */
-
 export const ScheduleCards: React.FC<ScheduleCardsProps> = ({
   schedules,
   onScheduleClick,
-  onDeleted,            // <<< notify page when done
-  onDeleteSection,      // <<< legacy; still supported
+  onDeleted,
+  onDeleteSection, // not used here anymore
   cols = 3,
   calendarMode = "dialog",
 }) => {
@@ -230,66 +226,11 @@ export const ScheduleCards: React.FC<ScheduleCardsProps> = ({
   const [selected, setSelected] = React.useState<SectionGroup | null>(null);
   const [open, setOpen] = React.useState(false);
 
-  // >>> Deletion wiring
-  const [confirmOpen, setConfirmOpen] = React.useState(false);
-  const [sectionToDelete, setSectionToDelete] = React.useState<SectionGroup | null>(null);
-  const [busy, setBusy] = React.useState(false);
+  // NEW: List view dialog state
+  const [listOpen, setListOpen] = React.useState(false);
+  const [listSection, setListSection] = React.useState<SectionGroup | null>(null);
 
-  const askDelete = (g: SectionGroup) => {
-    setSectionToDelete(g);
-    setConfirmOpen(true);
-  };
-
-  const performDelete = async () => {
-    if (!sectionToDelete) return;
-
-    // 1) Prepare both numeric and string id arrays
-    const numericIds = sectionToDelete.items
-      .map(i => Number(String(i.schedule_id)))
-      .filter(n => Number.isFinite(n) && n > 0);
-
-    if (numericIds.length === 0) return;
-
-    const stringIds = numericIds.map(String); // for callbacks typed as string[]
-
-    setBusy(true);
-    try {
-      // 2) Use bulk if available
-      if (typeof (apiService as any).deleteSchedulesBulk === "function") {
-        const res = await (apiService as any).deleteSchedulesBulk(numericIds);
-        if (!res?.success) throw new Error(res?.message || "Bulk delete failed");
-      } else {
-        // 3) Fallback: sequential deletion
-        for (const id of numericIds) {
-          const r = await apiService.deleteSchedule(id as any);
-          if (!r?.success) throw new Error(r?.message || "Delete failed");
-        }
-      }
-
-      toast({
-        title: "Deleted",
-        description: `Removed ${numericIds.length} schedule${numericIds.length > 1 ? "s" : ""} from ${sectionToDelete.name}.`,
-      });
-
-      // 4) Notify parent (string[] as per the prop type)
-      onDeleted?.(sectionToDelete.name, stringIds);
-      // legacy callback still supported
-      onDeleteSection?.(sectionToDelete.name, sectionToDelete.items);
-
-      setConfirmOpen(false);
-      setSectionToDelete(null);
-    } catch (e: any) {
-      toast({
-        title: "Error",
-        description: e?.message || "Failed to delete schedules.",
-        variant: "destructive",
-      });
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  // <<< Deletion wiring
+  const [itemBusy, setItemBusy] = React.useState<Record<string, boolean>>({});
 
   const openCalendarFor = (g: SectionGroup) => {
     if (calendarMode === "dialog") {
@@ -297,6 +238,49 @@ export const ScheduleCards: React.FC<ScheduleCardsProps> = ({
       setOpen(true);
     } else {
       setSelected(g);
+    }
+  };
+
+  const openListFor = (g: SectionGroup) => {
+    setListSection({
+      ...g,
+      items: [...g.items].sort(sortByDayThenTime),
+    });
+    setListOpen(true);
+  };
+
+  const deleteSingle = async (sched: Schedule) => {
+    const idNum = Number(String(sched.schedule_id));
+    if (!Number.isFinite(idNum)) return;
+
+    const key = String(sched.schedule_id);
+    setItemBusy((m) => ({ ...m, [key]: true }));
+    try {
+      const r = await apiService.deleteSchedule(idNum);
+      if (!r?.success) throw new Error(r?.message || "Delete failed");
+
+      toast({
+        title: "Deleted",
+        description: `Removed ${displayFor(sched).subjCode || "schedule"} from ${sched.section_name}.`,
+      });
+
+      onDeleted?.(sched.section_name, [key]);
+
+      // also reflect in list dialog immediately
+      if (listSection?.key === sched.section_name.trim()) {
+        setListSection((prev) =>
+          prev ? { ...prev, items: prev.items.filter(i => String(i.schedule_id) !== key) } : prev
+        );
+      }
+
+    } catch (e: any) {
+      toast({
+        title: "Error",
+        description: e?.message || "Failed to delete schedule.",
+        variant: "destructive",
+      });
+    } finally {
+      setItemBusy((m) => ({ ...m, [key]: false }));
     }
   };
 
@@ -316,7 +300,7 @@ export const ScheduleCards: React.FC<ScheduleCardsProps> = ({
                 className="relative overflow-hidden rounded-xl border bg-white hover:shadow-md transition-shadow cursor-pointer"
               >
                 <div className="absolute top-2 right-2 z-10">
-                  <SectionActionsMenu section={g} onAskDelete={askDelete} />
+                  <SectionActionsMenu section={g} onViewList={openListFor} />
                 </div>
 
                 {/* Header */}
@@ -337,11 +321,22 @@ export const ScheduleCards: React.FC<ScheduleCardsProps> = ({
                   {preview.map((s) => {
                     const d = displayFor(s);
                     const stripe = leftStripeClass(s);
+                    const busyThis = itemBusy[String(s.schedule_id)] === true;
                     return (
                       <div
                         key={s.schedule_id}
-                        className={`relative rounded-lg border p-2 pr-3 before:absolute before:left-0 before:top-0 before:h-full before:w-1 ${stripe}`}
+                        className={`relative rounded-lg border p-2 pr-9 before:absolute before:left-0 before:top-0 before:h-full before:w-1 ${stripe}`}
+                        onClick={(e) => { e.stopPropagation(); openCalendarFor(g); }}
                       >
+                        <button
+                          className="absolute right-2 top-2 rounded-md p-1 hover:bg-red-50 text-red-600"
+                          title="Delete this schedule"
+                          onClick={(e) => { e.stopPropagation(); deleteSingle(s); }}
+                          disabled={busyThis}
+                        >
+                          <Trash2 className={`h-4 w-4 ${busyThis ? "opacity-50" : ""}`} />
+                        </button>
+
                         <div className="flex items-start gap-2">
                           <BookOpen className="h-4 w-4 text-muted-foreground mt-0.5" />
                           <div className="min-w-0">
@@ -405,7 +400,7 @@ export const ScheduleCards: React.FC<ScheduleCardsProps> = ({
         </div>
       )}
 
-      {/* DIALOG — wider + guaranteed scrollbar */}
+      {/* CALENDAR DIALOG */}
       {calendarMode === "dialog" && (
         <Dialog open={open} onOpenChange={setOpen}>
           <DialogContent
@@ -424,7 +419,6 @@ export const ScheduleCards: React.FC<ScheduleCardsProps> = ({
                 </DialogTitle>
               </DialogHeader>
 
-              {/* Scrollable area for the calendar */}
               <div className="px-2 sm:px-4 pb-4 flex-1 min-h-0 overflow-auto overscroll-contain">
                 {selected && (
                   <div className="rounded-lg border bg-white">
@@ -443,30 +437,91 @@ export const ScheduleCards: React.FC<ScheduleCardsProps> = ({
         </Dialog>
       )}
 
-      {/* Confirm deletion dialog */}
-      <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete all schedules for this section?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This will permanently delete{" "}
-              <strong>{sectionToDelete?.items.length ?? 0}</strong> schedule
-              {sectionToDelete && sectionToDelete.items.length !== 1 ? "s" : ""} in{" "}
-              <em>{sectionToDelete?.name}</em>. This action cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-red-600 hover:bg-red-700"
-              onClick={performDelete}
-              disabled={busy}
-            >
-              {busy ? "Deleting..." : "Delete"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      {/* LIST VIEW DIALOG */}
+      <Dialog open={listOpen} onOpenChange={setListOpen}>
+        <DialogContent className="w-[98vw] sm:w-auto sm:max-w-[1100px] p-0">
+          <div className="flex flex-col max-h-[85vh]">
+            <DialogHeader className="px-4 pt-4 pb-2">
+              <DialogTitle className="flex items-center gap-2 text-base sm:text-lg">
+                <ListIcon className="h-5 w-5" />
+                {listSection?.name ?? "Schedules"}
+              </DialogTitle>
+            </DialogHeader>
+
+            <div className="px-4 pb-4 overflow-auto">
+              {/* Header meta */}
+              {listSection && (
+                <div className="mb-3 text-xs text-muted-foreground">
+                  Grade {listSection.level ?? "—"} • {listSection.strand ?? "—"} • {listSection.items.length} item{listSection.items.length !== 1 ? "s" : ""}
+                </div>
+              )}
+
+              {/* Responsive table */}
+              <div className="rounded-lg border overflow-hidden">
+                <div className="w-full overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-muted/40">
+                      <tr className="[&>th]:px-3 [&>th]:py-2 text-left">
+                        <th>Subject</th>
+                        <th>Time</th>
+                        <th>Days</th>
+                        <th>Room</th>
+                        <th>Professor</th>
+                        <th>Type</th>
+                        <th>Origin</th>
+                        <th className="text-right pr-3">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {listSection?.items.map((s) => {
+                        const d = displayFor(s);
+                        const busyThis = itemBusy[String(s.schedule_id)] === true;
+                        return (
+                          <tr key={s.schedule_id} className="border-t align-top">
+                            <td className="px-3 py-2">
+                              <div className="font-medium">{d.subjCode || s.schedule_type}</div>
+                              <div className="text-xs text-muted-foreground">{d.subjName}</div>
+                            </td>
+                            <td className="px-3 py-2 whitespace-nowrap">
+                              {formatTimeAMPM(s.start_time)}–{formatTimeAMPM(s.end_time)}
+                            </td>
+                            <td className="px-3 py-2">{daysLabel(s.days)}</td>
+                            <td className="px-3 py-2">{s.room_number || "—"}</td>
+                            <td className="px-3 py-2">{d.prof || "—"}</td>
+                            <td className="px-3 py-2">{s.schedule_type}</td>
+                            <td className="px-3 py-2">{getOriginBadge(s.origin)}</td>
+                            <td className="px-3 py-2">
+                              <div className="flex items-center justify-end gap-1">
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="h-8 px-2 text-red-600 hover:bg-red-50"
+                                  onClick={() => deleteSingle(s)}
+                                  disabled={busyThis}
+                                  title="Delete"
+                                >
+                                  <Trash2 className={`h-4 w-4 ${busyThis ? "opacity-50" : ""}`} />
+                                </Button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                      {(!listSection || listSection.items.length === 0) && (
+                        <tr>
+                          <td colSpan={8} className="px-3 py-6 text-center text-sm text-muted-foreground">
+                            No schedules to show.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

@@ -135,7 +135,7 @@ const normalizeStaticSlot = <
   return s;
 };
 
-const STRANDS = ["STEM", "ABM", "HUMSS", "ICT"] as const;
+const STRANDS = ["STEM", "ABM", "HUMSS", "ICT", "GAS"] as const;
 
 /* ----------------- Component ----------------- */
 const ScheduleManagement: React.FC = () => {
