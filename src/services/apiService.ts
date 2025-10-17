@@ -148,7 +148,6 @@ export interface AutoGenPayload {
   days: string[];
   startTime: string;
   endTime: string;
-  slotMinutes: number;
   maxDailyLoad?: number;
   onlySectionsWithAssignedRooms: boolean;
   preventSameTimeSameSection: boolean;
