@@ -17,7 +17,7 @@ const Admin: React.FC = () => {
     const fetchSchoolHeadsCount = async () => {
       try {
         const response = await fetch(
-          "https://spcc-scheduler.site/school_head.php"
+          "https://spcc-scheduler.site/acad_head.php"
         );
         const result = await response.json();
         if (Array.isArray(result)) {

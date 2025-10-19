@@ -131,7 +131,7 @@ const Dashboard = () => {
     switch (role) {
       case "admin":
         return "Administrator";
-      case "school_head":
+      case "acad_head":
         return "School Head";
       default:
         return "User";

@@ -17,7 +17,7 @@ const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
   };
 
   // Only show this layout for school head users
-  if (user?.role !== "school_head") {
+  if (user?.role !== "acad_head") {
     return null;
   }
 

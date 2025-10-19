@@ -1,7 +1,7 @@
 // services/authService.ts
 import { apiService, ApiResponse } from "./apiService";
 
-export type RolePick = "admin" | "school_head";
+export type RolePick = "admin" | "acad_head" | "super_admin" | "professors";
 
 export interface LoginCredentials {
   username: string;
@@ -14,6 +14,8 @@ export interface AuthUser {
   role: RolePick;
   email?: string;
   name?: string;
+  token?: string | null;
+  profile?: any;
 }
 
 export interface AuthResponse {
@@ -23,15 +25,10 @@ export interface AuthResponse {
   error?: string;
 }
 
-const ENDPOINTS: Record<RolePick, string> = {
-  admin: "/admin/auth.php",
-  school_head: "/auth_school_head.php",
-};
+const AUTH_ENDPOINT = "/auth.php";
 
 function parseBackend<T = any>(resp: ApiResponse<T> | any) {
-  // success flag could be boolean OR status === "success"
   const ok = resp?.success === true || resp?.status === "success";
-  // user could be resp.user OR resp.data.user
   const user = resp?.user ?? resp?.data?.user;
   const message =
     resp?.message ??
@@ -43,73 +40,101 @@ function parseBackend<T = any>(resp: ApiResponse<T> | any) {
   return { ok, user, message };
 }
 
+function coerceRole(r: any): RolePick | null {
+  const v = String(r ?? "").toLowerCase();
+  if (v === "admin") return "admin";
+  if (v === "super_admin") return "super_admin";
+  if (v === "acad_head" || v === "acad_head") return "acad_head";
+  if (v === "professors" || v === "professor") return "professors";
+  return null;
+}
+
+function normalizeUser(raw: any): AuthUser | null {
+  if (!raw) return null;
+  const role = coerceRole(raw.role);
+  if (!role) return null;
+
+  return {
+    id: String(raw.id ?? raw.user_id ?? ""),
+    username: String(raw.username ?? ""),
+    role,
+    email: raw.email ?? undefined,
+    name: raw.name ?? undefined,
+    token: raw.token ?? null,
+    profile: raw.profile ?? undefined,
+  };
+}
+
 class AuthService {
-  private async doAuth(
-    role: RolePick,
+  private async doUnifiedAuth(
     credentials: LoginCredentials
   ): Promise<AuthResponse> {
     try {
       const resp = await apiService.makeRequest<ApiResponse<any>>(
         "POST",
-        ENDPOINTS[role],
+        AUTH_ENDPOINT,
         credentials
       );
 
       const { ok, user, message } = parseBackend(resp);
 
-      if (ok && user) {
-        const normalized: AuthUser = {
-          id: String(user.id),
-          username: user.username,
-          role,
-          email: user.email,
-          name: user.name,
+      if (!ok || !user) {
+        return {
+          success: false,
+          message: message || "Invalid credentials",
         };
-        return { success: true, user: normalized };
       }
 
-      return {
-        success: false,
-        message: message || `Invalid ${role === "admin" ? "admin" : "acad head"} credentials`,
-      };
+      const normalized = normalizeUser(user);
+      if (!normalized) {
+        return {
+          success: false,
+          message: "Unable to determine user role.",
+        };
+      }
+
+      // Persist session (adjust keys as your app expects)
+      localStorage.setItem("user", JSON.stringify(normalized));
+      localStorage.setItem("role", normalized.role);
+      if (normalized.token) {
+        localStorage.setItem("authToken", normalized.token);
+      } else {
+        localStorage.removeItem("authToken");
+      }
+
+      return { success: true, user: normalized };
     } catch (err) {
-      console.error(`${role} auth error:`, err);
+      console.error("Auth error:", err);
       return {
         success: false,
-        error: `Failed to verify ${role === "admin" ? "admin" : "acad head"} credentials`,
+        error: "Authentication failed. Please try again.",
       };
     }
   }
 
-  /** Explicit role login (use this when the UI has a role selector). */
-  async loginAs(credentials: LoginCredentials, role: RolePick): Promise<AuthResponse> {
-    return this.doAuth(role, credentials);
+  // Unified login (single endpoint)
+  async login(
+    credentials: LoginCredentials,
+    _rolePick?: RolePick // ignored; kept for backward compatibility
+  ): Promise<AuthResponse> {
+    return this.doUnifiedAuth(credentials);
   }
 
-  /** Backward-compatible:
-   *  - If rolePick provided → use that role
-   *  - Else auto-fallback: try admin, then school_head
-   */
-  async login(credentials: LoginCredentials, rolePick?: RolePick): Promise<AuthResponse> {
-    try {
-      if (rolePick) {
-        return this.doAuth(rolePick, credentials);
-      }
-      const admin = await this.doAuth("admin", credentials);
-      if (admin.success) return admin;
-      return await this.doAuth("school_head", credentials);
-    } catch (error) {
-      console.error("Login error:", error);
-      return { success: false, error: "An error occurred during login. Please try again." };
-    }
+  // Backward-compatible wrappers (now just call unified)
+  async loginAs(credentials: LoginCredentials, _role: RolePick): Promise<AuthResponse> {
+    return this.doUnifiedAuth(credentials);
   }
-
-  // Convenience wrappers (kept for compatibility with existing calls)
   async verifyAdminCredentials(credentials: LoginCredentials): Promise<AuthResponse> {
-    return this.doAuth("admin", credentials);
+    return this.doUnifiedAuth(credentials);
   }
   async verifySchoolHeadCredentials(credentials: LoginCredentials): Promise<AuthResponse> {
-    return this.doAuth("school_head", credentials);
+    return this.doUnifiedAuth(credentials);
+  }
+  async verifySuperAdminCredentials(credentials: LoginCredentials): Promise<AuthResponse> {
+    return this.doUnifiedAuth(credentials);
+  }
+  async verifyProfessorCredentials(credentials: LoginCredentials): Promise<AuthResponse> {
+    return this.doUnifiedAuth(credentials);
   }
 
   logout(): void {

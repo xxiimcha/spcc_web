@@ -20,7 +20,7 @@ The system now allows school heads created through the admin interface to log in
 - Automatically redirects users based on their role
 - Shows helpful tips about using admin-created accounts
 
-### 3. PHP Authentication Backend (`auth_school_head.php`)
+### 3. PHP Authentication Backend (`auth_acad_head.php`)
 
 - Verifies school head credentials against the database
 - Returns user information for successful logins
@@ -34,7 +34,7 @@ The system now allows school heads created through the admin interface to log in
 
 ### 1. Database Configuration
 
-Update the database connection details in `auth_school_head.php`:
+Update the database connection details in `auth_acad_head.php`:
 
 ```php
 $host = 'localhost';
@@ -45,18 +45,18 @@ $dbpass = ''; // Your database password
 
 ### 2. File Placement
 
-Place `auth_school_head.php` in your PHP backend directory:
+Place `auth_acad_head.php` in your PHP backend directory:
 
 ```
-https://spcc-scheduler.site/auth_school_head.php
+https://spcc-scheduler.site/auth_acad_head.php
 ```
 
 ### 3. Database Table Structure
 
-Ensure your `school_head` table has these columns:
+Ensure your `acad_head` table has these columns:
 
 ```sql
-CREATE TABLE school_head (
+CREATE TABLE acad_head (
     id INT AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     username VARCHAR(100) UNIQUE NOT NULL,

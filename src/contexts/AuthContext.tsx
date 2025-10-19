@@ -1,83 +1,97 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode, useMemo } from "react";
+import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
+
+export type Role = "admin" | "acad_head" | "super_admin" | "professor";
 
 export interface User {
   id: string;
   username: string;
-  role: "admin" | "school_head";
+  role: Role;
   email?: string;
   name?: string;
+  token?: string | null;
+  profile?: any;
 }
 
-interface AuthContextType {
+type AuthContextValue = {
   user: User | null;
   isAuthenticated: boolean;
-  login: (user: User) => void;
+  login: (u: User) => void;
   logout: () => void;
+
+  // convenience flags
   isAdmin: boolean;
+  isSuperAdmin: boolean;
   isSchoolHead: boolean;
-}
-
-const USER_KEY = "user";
-const ROLE_KEY = "role";
-
-const AuthContext = createContext<AuthContextType | undefined>(undefined);
-
-export const useAuth = () => {
-  const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error("useAuth must be used within an AuthProvider");
-  return ctx;
+  isProfessor: boolean;
 };
 
-export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  // Lazy init from localStorage (client only)
-  const [user, setUser] = useState<User | null>(() => {
-    if (typeof window === "undefined") return null;
-    try {
-      const raw = localStorage.getItem(USER_KEY);
-      return raw ? (JSON.parse(raw) as User) : null;
-    } catch {
-      // Corrupt JSON or unexpected value
-      localStorage.removeItem(USER_KEY);
-      localStorage.removeItem(ROLE_KEY);
-      return null;
-    }
-  });
+const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
-  // Optional: keep multiple tabs in sync
+function readStoredUser(): User | null {
+  try {
+    const raw = localStorage.getItem("user");
+    const role = localStorage.getItem("role");
+    if (!raw || !role) return null;
+    const parsed = JSON.parse(raw);
+    // trust persisted shape; ensure role matches storage
+    return { ...parsed, role } as User;
+  } catch {
+    return null;
+  }
+}
+
+export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) => {
+  const [user, setUser] = useState<User | null>(() => readStoredUser());
+
   useEffect(() => {
-    const onStorage = (e: StorageEvent) => {
-      if (e.key === USER_KEY) {
-        try {
-          setUser(e.newValue ? (JSON.parse(e.newValue) as User) : null);
-        } catch {
-          setUser(null);
-        }
-      }
-    };
+    // keep state in sync if another tab logs out
+    const onStorage = () => setUser(readStoredUser());
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
   }, []);
 
-  const login = (userData: User) => {
-    setUser(userData);
-    localStorage.setItem(USER_KEY, JSON.stringify(userData));
-    localStorage.setItem(ROLE_KEY, userData.role);
+  const login = (u: User) => {
+    setUser(u);
+    localStorage.setItem("user", JSON.stringify(u));
+    localStorage.setItem("role", u.role);
+    if (u.token) localStorage.setItem("authToken", u.token);
+    else localStorage.removeItem("authToken");
   };
 
   const logout = () => {
     setUser(null);
-    localStorage.removeItem(USER_KEY);
-    localStorage.removeItem(ROLE_KEY);
+    localStorage.removeItem("user");
+    localStorage.removeItem("role");
+    localStorage.removeItem("authToken");
   };
 
-  const value = useMemo<AuthContextType>(() => ({
+  const isAuthenticated = !!user;
+
+  const flags = useMemo(
+    () => ({
+      isAdmin: user?.role === "admin" || user?.role === "super_admin",
+      isSuperAdmin: user?.role === "super_admin",
+      isSchoolHead: user?.role === "acad_head",
+      isProfessor: user?.role === "professor",
+    }),
+    [user?.role]
+  );
+
+  const value: AuthContextValue = {
     user,
-    isAuthenticated: !!user,
+    isAuthenticated,
     login,
     logout,
-    isAdmin: user?.role === "admin",
-    isSchoolHead: user?.role === "school_head",
-  }), [user]);
+    ...flags,
+  };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+};
+
+export const useAuth = (): AuthContextValue => {
+  const ctx = useContext(AuthContext);
+  if (!ctx) {
+    throw new Error("useAuth must be used within an AuthProvider");
+  }
+  return ctx;
 };

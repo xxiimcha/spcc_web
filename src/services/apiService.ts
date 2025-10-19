@@ -485,10 +485,10 @@ class ApiService {
 
   // --- School Heads ---------------------------------------------------------
 
-  async getSchoolHeads(): Promise<ApiResponse> { return this.makeRequest("GET", "/school_head.php"); }
-  async createSchoolHead(data: any): Promise<ApiResponse> { return this.makeRequest("POST", "/school_head.php", data); }
-  async updateSchoolHead(id: number, data: any): Promise<ApiResponse> { return this.makeRequest("PUT", `/school_head.php?id=${id}`, data); }
-  async deleteSchoolHead(id: number): Promise<ApiResponse> { return this.makeRequest("DELETE", `/school_head.php?id=${id}`); }
+  async getSchoolHeads(): Promise<ApiResponse> { return this.makeRequest("GET", "/acad_head.php"); }
+  async createSchoolHead(data: any): Promise<ApiResponse> { return this.makeRequest("POST", "/acad_head.php", data); }
+  async updateSchoolHead(id: number, data: any): Promise<ApiResponse> { return this.makeRequest("PUT", `/acad_head.php?id=${id}`, data); }
+  async deleteSchoolHead(id: number): Promise<ApiResponse> { return this.makeRequest("DELETE", `/acad_head.php?id=${id}`); }
 
   // --- Dashboard (normalized here!) ----------------------------------------
 
