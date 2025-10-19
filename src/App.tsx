@@ -19,8 +19,14 @@ const Rooms       = lazy(() => import("./pages/Rooms"));
 const ScheduleNew = lazy(() => import("./pages/ScheduleNew"));
 const Users       = lazy(() => import("./pages/Users"));
 
+
+const ProfessorLayout   = lazy(() => import("./components/layout/ProfessorLayout"));
+const ProfessorDashboard = lazy(() => import("./pages/ProfessorDashboard"));
+const ProfessorSubjects  = lazy(() => import("./pages/ProfessorSubjects"));
+
 const ADMIN_ROLES = ["admin", "super_admin"] as const;
 const APP_ROLES   = ["acad_head"] as const;
+const PROFESSOR_ROLES = ["professor"] as const;
 
 const AppRoutes = () => {
   const { isAuthenticated, user } = useAuth();
@@ -87,6 +93,23 @@ const AppRoutes = () => {
             )
           }
         />
+
+        <Route
+          path="/prof/*"
+          element={
+            isAuthenticated && PROFESSOR_ROLES.includes(user?.role as any) ? (
+              <ProfessorLayout>
+                {/* The Outlet in ProfessorLayout will render these child routes */}
+              </ProfessorLayout>
+            ) : (
+              <Navigate to="/pages/login" />
+            )
+          }
+        >
+          <Route index element={<ProfessorDashboard />} />
+          <Route path="dashboard" element={<ProfessorDashboard />} />
+          <Route path="subjects" element={<ProfessorSubjects />} />
+        </Route>
 
         {/* Fallback */}
         <Route path="*" element={<Navigate to="/" />} />
