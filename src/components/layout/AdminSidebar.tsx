@@ -9,6 +9,7 @@ import {
   Menu,
   BarChart3,
   FileDown,
+  Users,             // ⬅️ NEW: icon for User Management
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -75,7 +76,6 @@ interface AdminSidebarProps {
   onToggle: () => void;
 }
 
-// Helper function: build current + 3 previous school years
 const getSchoolYears = () => {
   const now = new Date();
   const currentStartYear = now.getMonth() >= 5 ? now.getFullYear() : now.getFullYear() - 1;
@@ -92,7 +92,6 @@ const AdminSidebar = ({ isOpen, onToggle }: AdminSidebarProps) => {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
   const { toast } = useToast();
-  const currentPath = location.pathname;
 
   const [exportOpen, setExportOpen] = useState(false);
   const [schoolYears, setSchoolYears] = useState<string[]>([]);
@@ -106,21 +105,19 @@ const AdminSidebar = ({ isOpen, onToggle }: AdminSidebarProps) => {
     navigate("/pages/login");
   };
 
-  // Populate school years locally when opening export dialog
   useEffect(() => {
     if (exportOpen) {
       const list = getSchoolYears();
       setSchoolYears(list);
       if (!selectedSY && list.length) setSelectedSY(list[0]);
     }
-  }, [exportOpen]);
+  }, [exportOpen, selectedSY]);
 
   const handleExport = async () => {
     if (!selectedSY) {
       toast({ variant: "destructive", title: "Please select a school year" });
       return;
     }
-
     try {
       const res = await fetch(
         `${API_BASE_URL}/export_all.php?school_year=${encodeURIComponent(selectedSY)}`
@@ -136,13 +133,9 @@ const AdminSidebar = ({ isOpen, onToggle }: AdminSidebarProps) => {
       link.click();
       link.remove();
 
-      toast({
-        title: "Export started",
-        description: `Downloading ${fileName}`,
-      });
-
+      toast({ title: "Export started", description: `Downloading ${fileName}` });
       setExportOpen(false);
-    } catch (err) {
+    } catch {
       toast({
         variant: "destructive",
         title: "Export failed",
@@ -150,6 +143,14 @@ const AdminSidebar = ({ isOpen, onToggle }: AdminSidebarProps) => {
       });
     }
   };
+
+  const currentPath = location.pathname;
+
+  const DASHBOARD_PATH = "/admin/dashboard";
+  const SETTINGS_PATH = "/admin/settings";
+
+  const isSuperAdmin = user?.role === "super_admin";
+  const isAdminOrSuper = user?.role === "admin" || user?.role === "super_admin"; // ⬅️ NEW
 
   return (
     <div
@@ -178,38 +179,90 @@ const AdminSidebar = ({ isOpen, onToggle }: AdminSidebarProps) => {
           <NavItem
             icon={<BarChart3 className="h-5 w-5" />}
             label="Dashboard"
-            path="/admin"
-            active={currentPath === "/admin"}
+            path={DASHBOARD_PATH}
+            active={currentPath === "/admin" || currentPath === DASHBOARD_PATH}
             isOpen={isOpen}
           />
 
           <NavItem
-            icon={<Settings className="h-5 w-5" />}
-            label="System Settings"
-            path="/admin/settings"
-            active={currentPath === "/admin/settings"}
+            icon={<Shield className="h-5 w-5" />}
+            label="Professors"
+            path="/admin/professors"
+            active={currentPath.startsWith("/admin/professors")}
             isOpen={isOpen}
           />
 
-          {/* Export Button */}
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  className={cn(
-                    "w-full justify-start gap-3 mb-1 text-left text-muted-foreground",
-                    !isOpen && "justify-center px-2"
-                  )}
-                  onClick={() => setExportOpen(true)}
-                >
-                  <FileDown className="h-5 w-5" />
-                  {isOpen && <span>Export Data</span>}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="right">Export Data</TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
+          <NavItem
+            icon={<Menu className="h-5 w-5" />}
+            label="Rooms"
+            path="/admin/rooms"
+            active={currentPath.startsWith("/admin/rooms")}
+            isOpen={isOpen}
+          />
+
+          <NavItem
+            icon={<FileDown className="h-5 w-5" />}
+            label="Subjects"
+            path="/admin/subjects"
+            active={currentPath.startsWith("/admin/subjects")}
+            isOpen={isOpen}
+          />
+
+          <NavItem
+            icon={<ChevronRight className="h-5 w-5" />}
+            label="Sections"
+            path="/admin/sections"
+            active={currentPath.startsWith("/admin/sections")}
+            isOpen={isOpen}
+          />
+
+          <NavItem
+            icon={<BarChart3 className="h-5 w-5" />}
+            label="Scheduling"
+            path="/admin/scheduling"
+            active={currentPath.startsWith("/admin/scheduling")}
+            isOpen={isOpen}
+          />
+
+          {/* ⬅️ NEW: User Management (visible to admin + super_admin) */}
+          {isAdminOrSuper && (
+            <NavItem
+              icon={<Users className="h-5 w-5" />}
+              label="User Management"
+              path="/admin/users"
+              active={currentPath.startsWith("/admin/users")}
+              isOpen={isOpen}
+            />
+          )}
+
+          <NavItem
+            icon={<Settings className="h-5 w-5" />}
+            label="System Settings"
+            path={SETTINGS_PATH}
+            active={currentPath === SETTINGS_PATH}
+            isOpen={isOpen}
+          />
+
+          {isSuperAdmin && (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    className={cn(
+                      "w-full justify-start gap-3 mb-1 text-left text-muted-foreground",
+                      !isOpen && "justify-center px-2"
+                    )}
+                    onClick={() => setExportOpen(true)}
+                  >
+                    <FileDown className="h-5 w-5" />
+                    {isOpen && <span>Export Data</span>}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="right">Export Data</TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
         </nav>
       </div>
 
@@ -224,7 +277,9 @@ const AdminSidebar = ({ isOpen, onToggle }: AdminSidebarProps) => {
               <p className="text-sm font-medium">
                 {user?.name || user?.username || "Admin User"}
               </p>
-              <p className="text-xs text-muted-foreground">Administrator</p>
+              <p className="text-xs text-muted-foreground">
+                {user?.role === "super_admin" ? "Super Admin" : "Admin"}
+              </p>
             </div>
           )}
         </div>
@@ -241,7 +296,6 @@ const AdminSidebar = ({ isOpen, onToggle }: AdminSidebarProps) => {
         </Button>
       </div>
 
-      {/* Export Dialog */}
       <Dialog open={exportOpen} onOpenChange={setExportOpen}>
         <DialogContent className="sm:max-w-[420px]">
           <DialogHeader>

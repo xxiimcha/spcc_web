@@ -17,6 +17,7 @@ const Settings    = lazy(() => import("./pages/Settings"));
 const Sections    = lazy(() => import("./pages/Sections"));
 const Rooms       = lazy(() => import("./pages/Rooms"));
 const ScheduleNew = lazy(() => import("./pages/ScheduleNew"));
+const Users       = lazy(() => import("./pages/Users"));
 
 const ADMIN_ROLES = ["admin", "super_admin"] as const;
 const APP_ROLES   = ["acad_head"] as const;
@@ -51,6 +52,7 @@ const AppRoutes = () => {
                   <Route path="sections" element={<Sections />} />
                   <Route path="scheduling" element={<Scheduling />} />
                   <Route path="scheduling/new" element={<ScheduleNew />} />
+                  <Route path="users" element={<Users />} />
                   <Route index element={<Admin />} />
                   <Route path="settings" element={<Settings />} />
                 </Routes>
