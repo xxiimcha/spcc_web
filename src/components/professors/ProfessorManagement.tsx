@@ -824,7 +824,6 @@ const ProfessorManagement = () => {
             email: selectedProfessor.email ?? "",
             phone: selectedProfessor.phone ?? "",
             username: selectedProfessor.username ?? "",
-            subject_ids: (selectedProfessor.subject_ids ?? []).map(Number),
           }}
           onSaved={async () => {
             setIsEditDialogOpen(false);
