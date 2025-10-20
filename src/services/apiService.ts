@@ -303,6 +303,22 @@ class ApiService {
     return this.makeRequest("GET", `/get_subject_professors.php?subject_id=${sid}`);
   }
 
+  async getProfessorSubjectPreferences(
+    profId: number | string
+  ): Promise<ApiResponse<{ subj_id: number; proficiency: "beginner" | "intermediate" | "advanced" }[]>> {
+    return this.makeRequest("GET", `/professor_subject_preferences.php?prof_id=${Number(profId)}`);
+  }
+
+  async saveProfessorSubjectPreferences(
+    profId: number | string,
+    preferences: { subj_id: number; proficiency: "beginner" | "intermediate" | "advanced" }[]
+  ): Promise<ApiResponse> {
+    return this.makeRequest("POST", "/professor_subject_preferences.php", {
+      prof_id: Number(profId),
+      preferences,
+    });
+  }
+  
   async getListOfSubjects(professorId?: number | string): Promise<ApiResponse> {
     const pid = professorId != null ? String(professorId) : "";
     const url = pid ? `/get_list_of_subjects.php?professor_id=${pid}` : "/get_list_of_subjects.php";
@@ -454,7 +470,7 @@ class ApiService {
       prof_id: Number(professorId),
     });
   }
-
+  
   async getAvailableTimeSlots(data: {
     school_year: string;
     semester: string;
