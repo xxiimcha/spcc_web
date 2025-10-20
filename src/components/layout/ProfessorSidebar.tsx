@@ -89,7 +89,7 @@ const ProfessorSidebar: React.FC<ProfessorSidebarProps> = ({ isOpen, onToggle })
 
           <NavItem
             icon={<BookOpen className="h-5 w-5" />}
-            label="My Subjects"
+            label="Subjects"
             path="/prof/subjects"
             active={location.pathname.startsWith("/prof/subjects")}
             isOpen={isOpen}

@@ -168,7 +168,7 @@ const ProfessorSubjects: React.FC = () => {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
             <BookOpen className="h-6 w-6" />
-            My Subjects
+            Subjects
           </h1>
           <p className="text-sm text-muted-foreground">
             Pick the subjects you prefer to handle and rate your proficiency.
