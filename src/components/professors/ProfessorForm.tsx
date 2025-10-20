@@ -23,22 +23,26 @@ import {
   DialogFooter,
   DialogDescription,
 } from "@/components/ui/dialog";
-import { Checkbox } from "@/components/ui/checkbox";
 import axios from "axios";
 
-const ABS_SUBJECTS_URL = "https://spcc-scheduler.site/subjects.php";
 const ABS_PROFESSORS_URL = "https://spcc-scheduler.site/professors.php";
-
-const MAX_SUBJECTS = 8;
 
 const optionalNonEmpty = (schema: z.ZodTypeAny) =>
   z.union([schema, z.literal("").transform(() => undefined)]);
 
 const phoneRegex = /^(?:\+?63|0)?(?:\d[\s-]?){9,12}\d$/;
 
+// Allow letters (incl. accents), spaces, dots, apostrophes, and hyphens.
+// Disallows digits and other symbols.
+const nameRegex = /^[A-Za-zÀ-ÖØ-öø-ÿ\s.'-]+$/;
+
 const makeSchema = (isEdit: boolean) =>
   z.object({
-    name: z.string().min(2, { message: "Name must be at least 2 characters" }),
+    name: z
+      .string()
+      .trim()
+      .min(2, { message: "Name must be at least 2 characters" })
+      .regex(nameRegex, { message: "Name must not contain numbers or special symbols" }),
     username: z
       .string()
       .min(4, { message: "Username must be at least 4 characters" })
@@ -61,9 +65,6 @@ const makeSchema = (isEdit: boolean) =>
     qualifications: z
       .array(z.string())
       .min(1, { message: "Add at least one specialization" }),
-    subject_ids: z
-      .array(z.number())
-      .min(1, { message: "Assign at least one subject" }),
   });
 
 interface ProfessorFormProps {
@@ -72,37 +73,6 @@ interface ProfessorFormProps {
   onSaved?: () => void;
   initialData?: Partial<z.infer<ReturnType<typeof makeSchema>>> & { prof_id?: number };
 }
-
-interface Subject {
-  id: number;
-  code: string;
-  name: string;
-  description?: string;
-  strand?: string;
-  grade_level?: string | number;
-}
-
-const arraysEqualUnordered = (a: number[] = [], b: number[] = []) => {
-  if (a.length !== b.length) return false;
-  const sa = [...a].sort((x, y) => x - y);
-  const sb = [...b].sort((x, y) => x - y);
-  for (let i = 0; i < sa.length; i++) if (sa[i] !== sb[i]) return false;
-  return true;
-};
-
-const normalizeSubjectsResponse = (raw: any): Subject[] => {
-  const list = Array.isArray(raw?.data) ? raw.data : Array.isArray(raw) ? raw : [];
-  return list
-    .map((s: any) => ({
-      id: Number(s.subj_id ?? s.id ?? 0),
-      code: String(s.subj_code ?? s.code ?? "").trim(),
-      name: String(s.subj_name ?? s.name ?? "").trim(),
-      description: (s.subj_description ?? s.description ?? "")?.toString()?.trim() || undefined,
-      strand: (s.strand ?? s.track ?? s.strand_code ?? "")?.toString()?.trim() || undefined,
-      grade_level: s.grade_level ?? s.grade ?? s.year_level,
-    }))
-    .filter((s: Subject) => s.id > 0 && (s.code || s.name));
-};
 
 const latinize = (str: string) =>
   str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
@@ -141,12 +111,12 @@ const ProfessorForm = ({
     email: "",
     phone: "",
     qualifications: [],
-    subject_ids: [],
   },
 }: ProfessorFormProps) => {
   const [qualifications, setQualifications] = useState<string[]>(initialData.qualifications || []);
   const [newQualification, setNewQualification] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+
   const [isSuccessDialogOpen, setIsSuccessDialogOpen] = useState(false);
   const [isErrorDialogOpen, setIsErrorDialogOpen] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
@@ -154,19 +124,6 @@ const ProfessorForm = ({
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [shouldCloseForm, setShouldCloseForm] = useState(false);
-
-  const [subjects, setSubjects] = useState<Subject[]>([]);
-  const [subjectsLoading, setSubjectsLoading] = useState(true);
-  const [subjectsError, setSubjectsError] = useState<string | null>(null);
-  const [selectedSubjectIds, setSelectedSubjectIds] = useState<number[]>(
-    (initialData.subject_ids as number[]) || []
-  );
-
-  const [subjectSearch, setSubjectSearch] = useState("");
-  const [subjectFilterKey, setSubjectFilterKey] = useState<"all" | "code" | "name">("all");
-  const [subjectStrandFilter, setSubjectStrandFilter] = useState<string>("ALL");
-
-  const abortRef = useRef<AbortController | null>(null);
 
   const isEdit = Boolean((initialData as any).prof_id);
   const schema = useMemo(() => makeSchema(isEdit), [isEdit]);
@@ -177,68 +134,9 @@ const ProfessorForm = ({
       ...initialData,
       password: "",
       qualifications: initialData.qualifications || [],
-      subject_ids: (initialData.subject_ids as number[]) || [],
     },
     mode: "onSubmit",
   });
-
-  // --- Helpers for max-cap logic ---
-  const reachedMax = selectedSubjectIds.length >= MAX_SUBJECTS;
-  const limitAdd = (current: number[], candidates: number[], max: number) => {
-    const set = new Set(current);
-    const out: number[] = [...current];
-    for (const id of candidates) {
-      if (out.length >= max) break;
-      if (!set.has(id)) {
-        set.add(id);
-        out.push(id);
-      }
-    }
-    return out;
-  };
-
-  const loadSubjects = async () => {
-    try {
-      abortRef.current?.abort();
-      abortRef.current = new AbortController();
-      setSubjectsLoading(true);
-      setSubjectsError(null);
-
-      const res = await axios.get(ABS_SUBJECTS_URL, {
-        timeout: 15000,
-        signal: abortRef.current.signal as any,
-      });
-
-      const normalized = normalizeSubjectsResponse(res?.data);
-      setSubjects(normalized);
-    } catch (e: any) {
-      if (e?.name === "CanceledError" || e?.code === "ERR_CANCELED") return;
-      console.error("Failed to load subjects:", e);
-      setSubjects([]);
-      setSubjectsError("Failed to load subjects");
-    } finally {
-      setSubjectsLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    loadSubjects();
-    return () => {
-      abortRef.current?.abort();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    const incoming = ((initialData.subject_ids as number[]) || []).map(Number);
-    if (!arraysEqualUnordered(incoming, selectedSubjectIds)) {
-      // Respect the max cap if initial data tries to exceed it
-      const capped = incoming.slice(0, MAX_SUBJECTS);
-      setSelectedSubjectIds(capped);
-      form.setValue("subject_ids", capped, { shouldValidate: true });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(initialData.subject_ids)]);
 
   const resetForm = () => {
     form.reset({
@@ -248,15 +146,10 @@ const ProfessorForm = ({
       email: "",
       phone: "",
       qualifications: [],
-      subject_ids: [],
     });
     setQualifications([]);
     setNewQualification("");
     setShowPassword(false);
-    setSelectedSubjectIds([]);
-    setSubjectSearch("");
-    setSubjectFilterKey("all");
-    setSubjectStrandFilter("ALL");
   };
 
   const handleGenerateUsername = () => {
@@ -286,42 +179,6 @@ const ProfessorForm = ({
     form.setValue("qualifications", updated, { shouldValidate: true });
   };
 
-  const allSelected = useMemo(
-    () => subjects.length > 0 && selectedSubjectIds.length === subjects.length,
-    [subjects.length, selectedSubjectIds.length]
-  );
-
-  const toggleAllSubjects = () => {
-    if (subjects.length === 0) return;
-
-    const ids = subjects.map((s) => Number(s.id));
-    if (allSelected) {
-      if (selectedSubjectIds.length === 0) return;
-      setSelectedSubjectIds([]);
-      form.setValue("subject_ids", [], { shouldValidate: true });
-    } else {
-      // Select up to MAX_SUBJECTS (respect already-selected)
-      const next = limitAdd(selectedSubjectIds, ids, MAX_SUBJECTS);
-      setSelectedSubjectIds(next);
-      form.setValue("subject_ids", next, { shouldValidate: true });
-    }
-  };
-
-  const toggleSubject = (id: number, checked: boolean) => {
-    const nId = Number(id);
-    if (checked) {
-      if (selectedSubjectIds.includes(nId)) return;
-      if (selectedSubjectIds.length >= MAX_SUBJECTS) return; // UI should disable, but guard too
-      const next = [...selectedSubjectIds, nId];
-      setSelectedSubjectIds(next);
-      form.setValue("subject_ids", next, { shouldValidate: true });
-    } else {
-      const next = selectedSubjectIds.filter((x) => x !== nId);
-      setSelectedSubjectIds(next);
-      form.setValue("subject_ids", next, { shouldValidate: true });
-    }
-  };
-
   const isNoChange = useMemo(() => {
     const values = form.getValues();
     if (!isEdit) return false;
@@ -333,49 +190,12 @@ const ProfessorForm = ({
     const qualsSame =
       JSON.stringify((values.qualifications || []).map((s) => s.trim())) ===
       JSON.stringify((initialData.qualifications || []).map((s) => s.trim()));
-    const subjectsSame = arraysEqualUnordered(
-      (values.subject_ids || []).map(Number),
-      ((initialData.subject_ids as number[]) || []).map(Number)
-    );
-    return baseSame && qualsSame && subjectsSame;
+    return baseSame && qualsSame;
   }, [form.watch(), initialData, isEdit]);
-
-  const availableStrands = useMemo(() => {
-    const set = new Set<string>();
-    subjects.forEach((s) => {
-      const st = (s.strand || "").toString().trim();
-      if (st) set.add(st.toUpperCase());
-    });
-    return Array.from(set).sort();
-  }, [subjects]);
-
-  const visibleSubjects = useMemo(() => {
-    const q = subjectSearch.trim().toLowerCase();
-    const filteredByQuery = !q
-      ? subjects
-      : subjects.filter((s) => {
-          const code = (s.code || "").toLowerCase();
-          const name = (s.name || "").toLowerCase();
-          if (subjectFilterKey === "code") return code.includes(q);
-          if (subjectFilterKey === "name") return name.includes(q);
-          return code.includes(q) || name.includes(q);
-        });
-
-    if (subjectStrandFilter === "ALL") return filteredByQuery;
-    return filteredByQuery.filter((s) => (s.strand || "").toUpperCase() === subjectStrandFilter);
-  }, [subjects, subjectSearch, subjectFilterKey, subjectStrandFilter]);
 
   const handleSubmit = async (data: z.infer<ReturnType<typeof makeSchema>>) => {
     try {
       setIsSubmitting(true);
-
-      // Safety net: block submit if > MAX
-      if (selectedSubjectIds.length > MAX_SUBJECTS) {
-        setErrorMessage(`You can assign a maximum of ${MAX_SUBJECTS} subjects.`);
-        setIsErrorDialogOpen(true);
-        setIsSubmitting(false);
-        return;
-      }
 
       const payload: any = {
         name: data.name.trim(),
@@ -383,7 +203,6 @@ const ProfessorForm = ({
         email: data.email.trim(),
         phone: data.phone || "",
         qualifications: qualifications.map((q) => q.trim()).filter(Boolean),
-        subject_ids: selectedSubjectIds.map(Number),
       };
 
       if (!isEdit || (data.password && String(data.password).trim() !== "")) {
@@ -437,7 +256,16 @@ const ProfessorForm = ({
     if (shouldCloseForm && onOpenChange) onOpenChange(false);
   };
 
-  const selectedCount = selectedSubjectIds.length;
+  // keep exactly which characters are allowed
+  const NAME_ALLOWED = /[^A-Za-zÀ-ÖØ-öø-ÿ\s.'-]/g; // anything NOT allowed
+
+  const sanitizeName = (v: string) => v.replace(NAME_ALLOWED, "");
+
+  // Block numeric keys (top row & numpad)
+  const isDigitKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    const { key, code } = e;
+    return /[0-9]/.test(key) || /^Numpad[0-9]$/.test(code);
+  };
 
   return (
     <>
@@ -484,10 +312,48 @@ const ProfessorForm = ({
                         <Input
                           placeholder="John Doe"
                           {...field}
+                          autoComplete="name"
+                          inputMode="text"
+                          pattern={nameRegex.source} // keeps browser validation hint
+                          onKeyDown={(e) => {
+                            if (isDigitKey(e)) {
+                              e.preventDefault(); // block typing digits
+                            }
+                          }}
+                          onChange={(e) => {
+                            const cleaned = sanitizeName(e.target.value);
+                            // only update if something changed (prevents cursor jumps)
+                            if (cleaned !== e.target.value) {
+                              const pos = e.target.selectionStart || 0;
+                              field.onChange(cleaned);
+                              // let the browser update caret naturally on next paint
+                            } else {
+                              field.onChange(e);
+                            }
+                          }}
+                          onPaste={(e) => {
+                            e.preventDefault();
+                            const pasted = (e.clipboardData || (window as any).clipboardData).getData("text");
+                            const cleaned = sanitizeName(pasted);
+                            const target = e.target as HTMLInputElement;
+                            const before = target.value.slice(0, target.selectionStart || 0);
+                            const after = target.value.slice(target.selectionEnd || 0);
+                            const next = sanitizeName(before + cleaned + after);
+                            field.onChange(next);
+                          }}
                           onBlur={() => {
                             field.onBlur();
                             const uname = form.getValues("username");
-                            if (!uname) handleGenerateUsername();
+                            if (!uname) {
+                              // regenerate username if blank
+                              const candidate = sanitizeName(form.getValues("name") || "");
+                              if (candidate.trim()) {
+                                form.setValue("username", makeUsername(candidate), {
+                                  shouldValidate: true,
+                                  shouldDirty: true,
+                                });
+                              }
+                            }
                           }}
                         />
                       </FormControl>
@@ -495,6 +361,7 @@ const ProfessorForm = ({
                     </FormItem>
                   )}
                 />
+
 
                 {/* Username */}
                 <FormField
@@ -645,147 +512,6 @@ const ProfessorForm = ({
                   )}
                 />
               </div>
-
-              {/* Subject assignment */}
-              <FormField
-                control={form.control}
-                name="subject_ids"
-                render={() => (
-                  <FormItem>
-                    <FormLabel className="flex items-center justify-between">
-                      <span>
-                        Assign Subjects{" "}
-                        <span className="text-muted-foreground text-sm">
-                          ({selectedCount} selected, max {MAX_SUBJECTS})
-                        </span>
-                      </span>
-                      <div className="flex items-center gap-3">
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          onClick={toggleAllSubjects}
-                          disabled={subjectsLoading || subjects.length === 0 || (reachedMax && !allSelected)}
-                          title={reachedMax && !allSelected ? "Maximum reached" : "Select/Clear All"}
-                        >
-                          {allSelected ? "Clear All" : "Select All (up to 8)"}
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          disabled={subjectsLoading}
-                          onClick={loadSubjects}
-                          title="Reload subjects"
-                        >
-                          <RefreshCw className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </FormLabel>
-
-                    {/* Search + filters */}
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between mb-2">
-                      <div className="flex flex-wrap gap-2 items-center">
-                        <Input
-                          placeholder="Search subjects…"
-                          value={subjectSearch}
-                          onChange={(e) => setSubjectSearch(e.target.value)}
-                          className="w-full sm:w-[260px]"
-                        />
-                        <select
-                          className="border rounded-md px-2 py-2 text-sm"
-                          value={subjectFilterKey}
-                          onChange={(e) => setSubjectFilterKey(e.target.value as any)}
-                          title="Filter field"
-                        >
-                          <option value="all">All fields</option>
-                          <option value="code">Subject Code</option>
-                          <option value="name">Subject Name</option>
-                        </select>
-                        <select
-                          className="border rounded-md px-2 py-2 text-sm"
-                          value={subjectStrandFilter}
-                          onChange={(e) => setSubjectStrandFilter(e.target.value)}
-                          title="Filter by Strand"
-                        >
-                          <option value="ALL">All Strands</option>
-                          {availableStrands.map((st) => (
-                            <option key={st} value={st}>
-                              {st}
-                            </option>
-                          ))}
-                        </select>
-                        {(subjectSearch || subjectStrandFilter !== "ALL") && (
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => {
-                              setSubjectSearch("");
-                              setSubjectStrandFilter("ALL");
-                            }}
-                          >
-                            Clear
-                          </Button>
-                        )}
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        {subjectsLoading
-                          ? "Loading…"
-                          : `${visibleSubjects.length} / ${subjects.length} subjects`}
-                      </div>
-                    </div>
-
-                    {reachedMax && (
-                      <div className="text-xs text-amber-600 mb-1">
-                        Maximum of {MAX_SUBJECTS} subjects reached. Unselect one to choose another.
-                      </div>
-                    )}
-
-                    <div className="border rounded-lg p-3 max-h-64 overflow-auto bg-white">
-                      {subjectsLoading ? (
-                        <p className="text-sm text-muted-foreground">Loading subjects…</p>
-                      ) : subjectsError ? (
-                        <p className="text-sm text-destructive">{subjectsError}</p>
-                      ) : visibleSubjects.length === 0 ? (
-                        <p className="text-sm text-muted-foreground">No subjects match your filters.</p>
-                      ) : (
-                        <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                          {visibleSubjects.map((s) => {
-                            const checked = selectedSubjectIds.includes(s.id);
-                            // Disable if we've reached max and this item is not already checked
-                            const disableThis = !checked && reachedMax;
-                            return (
-                              <li key={s.id} className="flex items-center gap-2">
-                                <Checkbox
-                                  id={`subj-${s.id}`}
-                                  checked={checked}
-                                  disabled={disableThis}
-                                  onCheckedChange={(val) => toggleSubject(s.id, Boolean(val))}
-                                />
-                                <label
-                                  htmlFor={`subj-${s.id}`}
-                                  className={`text-sm leading-none select-none ${
-                                    disableThis ? "opacity-60 cursor-not-allowed" : "cursor-pointer"
-                                  }`}
-                                  title={disableThis ? "Maximum selected" : ""}
-                                >
-                                  <span className="font-medium">{s.code || "SUBJ"}</span> - {s.name}
-                                  {s.strand ? (
-                                    <span className="text-xs text-muted-foreground"> ({s.strand.toUpperCase()})</span>
-                                  ) : null}
-                                </label>
-                              </li>
-                            );
-                          })}
-                        </ul>
-                      )}
-                    </div>
-
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
 
               <DialogFooter>
                 <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
